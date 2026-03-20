@@ -120,13 +120,17 @@ function spawnWave() {
   const count = 8 + (wave - 1) * 3;
   const hp = Math.round(30 * Math.pow(1.2, wave - 1));
   const speed = (1 + (wave - 1) * 0.05) * TILE * 0.6;
-  const lx = (LANE_X_TILE + 0.5) * TILE;
+  // Spawn enemies horizontally across row 0, spread across full width
+  // so they don't pile on top of defenders placed near the top
+  const spacing = (canvas.width - TILE) / Math.max(count - 1, 1);
   for (let i = 0; i < count; i++) {
-    // Stagger spawn across row 0 — all inside grid
+    const ex = TILE * 0.5 + i * spacing;
+    const ey = TILE * 0.5; // center of row 0
     enemies.push({
-      x: lx + (Math.random() - 0.5) * TILE * 0.5,
-      y: TILE * 0.5 + i * (TILE * 0.6), // spread down from row 0, still in grid
-      hp, maxHp: hp, speed, dead: false, leaked: false, flashT: 0, atkCooldown: 0,
+      x: clamp(ex, TILE*0.4, canvas.width - TILE*0.4),
+      y: ey,
+      hp, maxHp: hp, speed, dead: false, leaked: false,
+      flashT: 0, atkCooldown: 0, alert: null, // alert = alerted enemy target
     });
   }
 }
@@ -202,19 +206,31 @@ function update(dt) {
     if (u.flashT > 0) u.flashT -= dt;
     if (u.atkCooldown > 0) u.atkCooldown -= dt;
 
-    let closest = null, closestD = Infinity, nearestE = null, nearestD = Infinity;
+    // Use alerted target if set, otherwise find own target
+    let closest = u.alert && !u.alert.dead && !u.alert.leaked ? u.alert : null;
+    let closestD = closest ? dist(u.x, u.y, closest.x, closest.y) : Infinity;
+    let nearestE = null, nearestD = Infinity;
+
     for (const e of enemies) {
       if (e.dead || e.leaked) continue;
       const d = dist(u.x, u.y, e.x, e.y);
       if (d <= u.range * TILE && d < closestD) { closest = e; closestD = d; }
       if (d < nearestD) { nearestE = e; nearestD = d; }
     }
+    u.alert = null; // reset alert each tick — re-applied by squad logic below
 
     if (closest && u.atkCooldown <= 0) {
       u.atkCooldown = 1 / u.atkSpeed; u.flashT = 0.1;
       closest.hp -= u.dmg; closest.flashT = 0.12;
       particles.push({ x: closest.x, y: closest.y - 16, text: `-${u.dmg}`, t:0.9, color:'#FF6B6B' });
       if (closest.hp <= 0) { closest.dead = true; gold += 2; updateUI(); }
+      // Squad alert: tell nearby friendly units about this enemy
+      for (const ally of units) {
+        if (!ally.alive || ally === u) continue;
+        if (!ally.alert && dist(u.x, u.y, ally.x, ally.y) <= TILE * 3) {
+          ally.alert = closest;
+        }
+      }
     } else if (nearestE && nearestD > u.range * TILE * 0.85 && nearestD <= u.range * TILE * 2.5) {
       moveTo(u, nearestE.x, nearestE.y, u.moveSpeed, dt);
     } else if (!nearestE || nearestD > u.range * TILE * 2.5) {
@@ -251,7 +267,11 @@ function update(dt) {
     if (e.flashT > 0) e.flashT -= dt;
     if (e.atkCooldown > 0) e.atkCooldown -= dt;
 
-    let nearestU = null, nearestUD = Infinity;
+    // Use alerted target if set
+    let nearestU = e.alert && e.alert.alive && e.alert.hp > 0 ? e.alert : null;
+    let nearestUD = nearestU ? dist(e.x, e.y, nearestU.x, nearestU.y) : Infinity;
+    e.alert = null;
+
     for (const u of units) {
       if (!u.alive) continue;
       const d = dist(e.x, e.y, u.x, u.y);
@@ -264,6 +284,13 @@ function update(dt) {
         e.atkCooldown = 1.0; nearestU.hp -= 15; nearestU.flashT = 0.15;
         particles.push({ x: nearestU.x, y: nearestU.y - 14, text: '-15', t:0.8, color:'#e74c3c' });
         if (nearestU.hp <= 0) { nearestU.alive = false; nearestU.hp = 0; }
+        // Squad alert: tell nearby enemies about this defender
+        for (const ally of enemies) {
+          if (ally.dead || ally.leaked || ally === e) continue;
+          if (!ally.alert && dist(e.x, e.y, ally.x, ally.y) <= TILE * 3) {
+            ally.alert = nearestU;
+          }
+        }
       }
     } else if (nearestU && nearestUD < TILE * 5) {
       moveTo(e, nearestU.x, nearestU.y, e.speed, dt);
