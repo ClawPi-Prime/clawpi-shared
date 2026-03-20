@@ -76,7 +76,7 @@ function resize() {
 resize(); window.addEventListener('resize', resize);
 
 const UNIT_DEFS = {
-  archer: { cost:10, hp:50,  dmg:8,  range:3,   atkSpeed:1.0, moveSpeed:1.8, color:'#4CAF50' },
+  archer: { cost:10, hp:50,  dmg:10, range:3,   atkSpeed:1.0, moveSpeed:1.8, color:'#4CAF50' },
   knight: { cost:25, hp:150, dmg:20, range:1.5,  atkSpeed:0.8, moveSpeed:2.2, color:'#2196F3' },
   mage:   { cost:40, hp:80,  dmg:35, range:4,    atkSpeed:0.5, moveSpeed:1.5, color:'#9C27B0' },
   cannon: { cost:60, hp:120, dmg:60, range:3,    atkSpeed:0.3, moveSpeed:1.2, color:'#FF5722' },
@@ -299,22 +299,20 @@ function update(dt) {
       moveTo(e, lx, exitY, e.speed, dt);
     }
 
-    // Clamp to grid
-    e.x = clamp(e.x, TILE * 0.3, canvas.width - TILE * 0.3);
-    e.y = clamp(e.y, TILE * 0.3, canvas.height - TILE * 0.3);
-
-    // Reached exit portal row
-    if (e.y >= EXIT_ROW * TILE + TILE * 0.6) {
+    // Check exit portal BEFORE clamping
+    if (e.y >= EXIT_ROW * TILE + TILE * 0.3) {
       e.leaked = true;
-      // Teleport to king's room entrance
-      const kt = KT;
       leakedEnemies.push({
-        x: (KC / 2 + (Math.random() - 0.5) * 1.5) * kt,
-        y: kt * 1.2,
+        x: (KC / 2 + (Math.random() - 0.5) * 1.5) * KT,
+        y: KT * 1.2,
         hp: Math.ceil(e.hp), maxHp: e.maxHp,
         speed: e.speed * 1.3,
         dead: false, flashT: 0, atkCooldown: 0,
       });
+    } else {
+      // Only clamp non-leaked enemies
+      e.x = clamp(e.x, TILE * 0.3, canvas.width - TILE * 0.3);
+      e.y = clamp(e.y, TILE * 0.3, canvas.height - TILE * 0.3);
     }
   }
 
