@@ -8,8 +8,7 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; height: 100vh; overflow: hidden; }
   #topbar { display: flex; gap: 40px; padding: 10px 20px; background: #16213e; width: 100%; justify-content: center; font-size: 18px; font-weight: bold; border-bottom: 2px solid #0f3460; }
-  .stat { display: flex; align-items: center; gap: 8px; }
-  .stat span:first-child { color: #aaa; font-size: 13px; font-weight: normal; }
+  .stat span:first-child { color: #aaa; font-size: 13px; font-weight: normal; margin-right: 6px; }
   #gold-val { color: #FFD700; }
   #king-val { color: #e74c3c; }
   #wave-val { color: #3498db; }
@@ -23,7 +22,6 @@
   #start-btn { padding: 10px 24px; border: none; border-radius: 8px; background: #27ae60; color: #fff; font-size: 15px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
   #start-btn:hover { background: #2ecc71; }
   #start-btn:disabled { background: #555; cursor: default; }
-  #phase-label { font-size: 13px; color: #aaa; min-width: 120px; text-align: center; }
 </style>
 </head>
 <body>
@@ -31,7 +29,7 @@
   <div class="stat"><span>WAVE</span><span id="wave-val">1</span></div>
   <div class="stat"><span>GOLD</span><span id="gold-val">50g</span></div>
   <div class="stat"><span>KING HP</span><span id="king-val">100</span></div>
-  <div class="stat"><span>PHASE</span><span id="phase-label">BUILD</span></div>
+  <div class="stat"><span>PHASE</span><span id="phase-label">BUILD 30s</span></div>
 </div>
 <div id="canvas-wrap"><canvas id="gameCanvas"></canvas></div>
 <div id="bottombar">
@@ -46,9 +44,8 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// Grid config
 const COLS = 12, ROWS = 20;
-const LANE_COLS = [5, 6];
+const LANE_COL_L = 5, LANE_COL_R = 6; // visual lane hint only
 let TILE = 36;
 
 function resize() {
@@ -62,67 +59,52 @@ function resize() {
 resize();
 window.addEventListener('resize', resize);
 
-// Unit definitions
 const UNIT_DEFS = {
-  archer:  { name:'Archer',  cost:10, hp:50,  dmg:8,  range:3, atkSpeed:1.0, color:'#4CAF50', textColor:'#fff' },
-  knight:  { name:'Knight',  cost:25, hp:150, dmg:20, range:1, atkSpeed:0.8, color:'#2196F3', textColor:'#fff' },
-  mage:    { name:'Mage',    cost:40, hp:80,  dmg:35, range:4, atkSpeed:0.5, color:'#9C27B0', textColor:'#fff' },
-  cannon:  { name:'Cannon',  cost:60, hp:120, dmg:60, range:3, atkSpeed:0.3, color:'#FF5722', textColor:'#fff' },
+  archer: { name:'Archer', cost:10, hp:50,  dmg:8,  range:3,   atkSpeed:1.0, color:'#4CAF50' },
+  knight: { name:'Knight', cost:25, hp:150, dmg:20, range:1.2, atkSpeed:0.8, color:'#2196F3' },
+  mage:   { name:'Mage',   cost:40, hp:80,  dmg:35, range:4,   atkSpeed:0.5, color:'#9C27B0' },
+  cannon: { name:'Cannon', cost:60, hp:120, dmg:60, range:3,   atkSpeed:0.3, color:'#FF5722' },
 };
 
-// Game state
 let gold = 50, kingHp = 100, maxKingHp = 100, wave = 1;
-let phase = 'build'; // 'build' | 'combat' | 'income'
+let phase = 'build';
 let buildTimer = 30;
 let lastTime = 0;
-
-let units = [];
-let enemies = [];
-let particles = []; // damage numbers, effects
-let selectedType = null;
-let hoverCell = null;
-let attackFlashes = []; // {x,y,t}
-
-// Waypoints: enemy path center column
-const LANE_CENTER_COL = 5.5;
-const WAYPOINTS = [
-  { x: LANE_CENTER_COL, y: -0.5 },
-  { x: LANE_CENTER_COL, y: ROWS + 0.5 },
-];
-
-// Build phase timer interval
+let units = [], enemies = [], particles = [];
+let selectedType = null, hoverCell = null;
 let buildInterval = null;
 
-function isLane(col, row) { return LANE_COLS.includes(col); }
+// Enemy spawns along top of lane columns, marches down
+const LANE_X_CENTER = (LANE_COL_L + 1) * TILE; // center of 2-tile lane
+
+function isOccupied(col, row) { return !!units.find(u => u.col === col && u.row === row); }
 function isValidPlacement(col, row) {
-  if (isLane(col, row)) return false;
   if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return false;
-  // Check not occupied
-  return !units.find(u => u.col === col && u.row === row);
+  return !isOccupied(col, row);
 }
 
 function spawnWave() {
   const count = 8 + (wave - 1) * 3;
   const hp = Math.round(30 * Math.pow(1.2, wave - 1));
-  const speed = 1 + (wave - 1) * 0.05;
+  const speed = (1 + (wave - 1) * 0.05) * TILE * 0.6;
   for (let i = 0; i < count; i++) {
     enemies.push({
-      x: (LANE_CENTER_COL + 0.5) * TILE,
-      y: (-i * 60 - 30),
+      x: LANE_X_CENTER,
+      y: -i * 55 - 30,
       hp, maxHp: hp,
-      speed: speed * TILE * 0.6,
-      wpIdx: 0,
+      speed,
       dead: false,
       leaked: false,
       flashT: 0,
+      atkCooldown: 0,
+      target: null,
     });
   }
 }
 
 function startWave() {
   if (phase !== 'build') return;
-  clearInterval(buildInterval);
-  buildInterval = null;
+  clearInterval(buildInterval); buildInterval = null;
   phase = 'combat';
   spawnWave();
   document.getElementById('start-btn').disabled = true;
@@ -145,13 +127,12 @@ function updateUI() {
   document.getElementById('wave-val').textContent = wave;
   document.getElementById('gold-val').textContent = gold + 'g';
   document.getElementById('king-val').textContent = kingHp;
-  const phaseEl = document.getElementById('phase-label');
-  if (phase === 'build') phaseEl.textContent = `BUILD ${buildTimer}s`;
-  else if (phase === 'combat') phaseEl.textContent = 'COMBAT';
-  else phaseEl.textContent = 'INCOME';
+  const pl = document.getElementById('phase-label');
+  if (phase === 'build') pl.textContent = `BUILD ${buildTimer}s`;
+  else if (phase === 'combat') pl.textContent = 'COMBAT';
+  else pl.textContent = 'INCOME';
 }
 
-// Unit click
 document.querySelectorAll('.unit-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const t = btn.dataset.type;
@@ -159,279 +140,227 @@ document.querySelectorAll('.unit-btn').forEach(btn => {
     document.querySelectorAll('.unit-btn').forEach(b => b.classList.toggle('selected', b.dataset.type === selectedType));
   });
 });
-
 document.getElementById('start-btn').addEventListener('click', startWave);
 
 canvas.addEventListener('mousemove', e => {
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-  hoverCell = { col: Math.floor(mx / TILE), row: Math.floor(my / TILE) };
+  const r = canvas.getBoundingClientRect();
+  hoverCell = { col: Math.floor((e.clientX - r.left) / TILE), row: Math.floor((e.clientY - r.top) / TILE) };
 });
 canvas.addEventListener('mouseleave', () => { hoverCell = null; });
-
 canvas.addEventListener('click', e => {
   if (phase !== 'build' || !selectedType) return;
-  const rect = canvas.getBoundingClientRect();
-  const col = Math.floor((e.clientX - rect.left) / TILE);
-  const row = Math.floor((e.clientY - rect.top) / TILE);
+  const r = canvas.getBoundingClientRect();
+  const col = Math.floor((e.clientX - r.left) / TILE);
+  const row = Math.floor((e.clientY - r.top) / TILE);
   const def = UNIT_DEFS[selectedType];
   if (!isValidPlacement(col, row)) return;
-  if (gold < def.cost) return;
+  if (gold < def.cost) { particles.push({ x: canvas.width/2, y: 80, text: 'Not enough gold!', t: 1.5, color:'#e74c3c', big:true }); return; }
   gold -= def.cost;
-  units.push({
-    col, row,
-    type: selectedType,
-    hp: def.hp, maxHp: def.hp,
-    dmg: def.dmg,
-    range: def.range,
-    atkSpeed: def.atkSpeed,
-    color: def.color,
-    atkCooldown: 0,
-    flashT: 0,
-    target: null,
-  });
+  units.push({ col, row, type: selectedType, hp: def.hp, maxHp: def.hp, dmg: def.dmg, range: def.range, atkSpeed: def.atkSpeed, color: def.color, atkCooldown: 0, flashT: 0 });
   updateUI();
 });
 
-// Combat helpers
 function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 
 function update(dt) {
-  // Build phase: nothing to update game-wise
-  if (phase === 'combat') {
-    // Move enemies
-    let allDone = true;
-    for (const e of enemies) {
-      if (e.dead || e.leaked) continue;
-      allDone = false;
-      const wp = WAYPOINTS[1];
-      const tx = wp.x * TILE, ty = wp.y * TILE;
-      const dx = tx - e.x, dy = ty - e.y;
+  if (phase !== 'combat') return;
+
+  // --- Enemies ---
+  for (const e of enemies) {
+    if (e.dead || e.leaked) continue;
+    if (e.flashT > 0) e.flashT -= dt;
+    if (e.atkCooldown > 0) e.atkCooldown -= dt;
+
+    // Find nearest living unit
+    let nearestUnit = null, nearestDist = Infinity;
+    for (const u of units) {
+      if (u.hp <= 0) continue;
+      const d = dist(e.x, e.y, (u.col + 0.5) * TILE, (u.row + 0.5) * TILE);
+      if (d < nearestDist) { nearestDist = d; nearestUnit = u; }
+    }
+
+    const attackRange = TILE * 1.2;
+
+    if (nearestUnit && nearestDist <= attackRange) {
+      // In range of a unit — stop and fight
+      if (e.atkCooldown <= 0) {
+        e.atkCooldown = 1.2; // enemies attack every 1.2s
+        nearestUnit.hp -= 12;
+        nearestUnit.flashT = 0.15;
+        particles.push({ x: (nearestUnit.col + 0.5) * TILE, y: nearestUnit.row * TILE, text: '-12', t: 1.0, color: '#e74c3c' });
+        if (nearestUnit.hp <= 0) nearestUnit.hp = 0;
+      }
+    } else {
+      // No unit in melee — check if any unit is blocking forward path
+      // Move toward nearest unit if one exists, otherwise march to end
+      const targetX = nearestUnit ? (nearestUnit.col + 0.5) * TILE : LANE_X_CENTER;
+      const targetY = nearestUnit ? (nearestUnit.row + 0.5) * TILE : canvas.height + 50;
+
+      const dx = targetX - e.x, dy = targetY - e.y;
       const d = Math.hypot(dx, dy);
-      if (d < 4) {
+      if (d > 2) {
+        const spd = e.speed * dt;
+        e.x += (dx / d) * spd;
+        e.y += (dy / d) * spd;
+      }
+
+      // Leaked?
+      if (e.y > canvas.height + 10) {
         e.leaked = true;
         kingHp = Math.max(0, kingHp - 10);
         updateUI();
-        if (kingHp <= 0) { phase = 'gameover'; }
-        continue;
-      }
-      const spd = e.speed * dt;
-      e.x += (dx / d) * spd;
-      e.y += (dy / d) * spd;
-      if (e.flashT > 0) e.flashT -= dt;
-    }
-
-    // Units attack
-    for (const u of units) {
-      u.atkCooldown -= dt;
-      if (u.flashT > 0) u.flashT -= dt;
-      // Find nearest enemy in range
-      let closest = null, closestDist = Infinity;
-      const ux = (u.col + 0.5) * TILE, uy = (u.row + 0.5) * TILE;
-      for (const e of enemies) {
-        if (e.dead || e.leaked) continue;
-        const d = dist(ux, uy, e.x, e.y);
-        if (d <= u.range * TILE && d < closestDist) {
-          closest = e; closestDist = d;
-        }
-      }
-      if (closest && u.atkCooldown <= 0) {
-        u.atkCooldown = 1 / u.atkSpeed;
-        u.flashT = 0.12;
-        closest.hp -= u.dmg;
-        closest.flashT = 0.15;
-        // Damage particle
-        particles.push({ x: closest.x, y: closest.y - TILE * 0.3, text: `-${u.dmg}`, t: 1.2, color: '#FF6B6B' });
-        if (closest.hp <= 0) {
-          closest.dead = true;
-          gold += 2;
-          updateUI();
-        }
+        if (kingHp <= 0) phase = 'gameover';
       }
     }
-
-    // Update particles
-    particles = particles.filter(p => p.t > 0);
-    for (const p of particles) {
-      p.t -= dt;
-      p.y -= 20 * dt;
-    }
-
-    // Check wave done
-    const alive = enemies.filter(e => !e.dead && !e.leaked);
-    if (alive.length === 0 && enemies.length > 0) {
-      // Wave complete
-      const leaks = enemies.filter(e => e.leaked).length;
-      const bonus = leaks === 0 ? 5 : 0;
-      const income = 10 + wave;
-      gold += income + bonus;
-      wave++;
-      enemies = [];
-      particles.push({ x: canvas.width / 2, y: canvas.height / 2, text: leaks === 0 ? '✓ CLEAN! +' + (income + bonus) + 'g' : 'WAVE DONE +' + income + 'g', t: 2.5, color: leaks === 0 ? '#2ecc71' : '#f1c40f', big: true });
-      updateUI();
-      setTimeout(() => { startBuildPhase(); }, 2000);
-      phase = 'income';
-    }
-  }
-}
-
-function drawGrid() {
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.lineWidth = 0.5;
-  for (let c = 0; c <= COLS; c++) {
-    ctx.beginPath(); ctx.moveTo(c * TILE, 0); ctx.lineTo(c * TILE, canvas.height); ctx.stroke();
-  }
-  for (let r = 0; r <= ROWS; r++) {
-    ctx.beginPath(); ctx.moveTo(0, r * TILE); ctx.lineTo(canvas.width, r * TILE); ctx.stroke();
   }
 
-  // Lane shading
-  for (const lc of LANE_COLS) {
-    ctx.fillStyle = 'rgba(255,255,255,0.04)';
-    ctx.fillRect(lc * TILE, 0, TILE, canvas.height);
-  }
-
-  // Hover highlight
-  if (hoverCell && phase === 'build' && selectedType) {
-    const { col, row } = hoverCell;
-    const valid = isValidPlacement(col, row);
-    ctx.fillStyle = valid ? 'rgba(255,255,255,0.12)' : 'rgba(255,0,0,0.15)';
-    ctx.fillRect(col * TILE, row * TILE, TILE, TILE);
-
-    // Range preview
-    if (valid && selectedType) {
-      const def = UNIT_DEFS[selectedType];
-      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc((col + 0.5) * TILE, (row + 0.5) * TILE, def.range * TILE, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-  }
-}
-
-function drawUnits() {
+  // --- Units attack enemies ---
   for (const u of units) {
-    const x = u.col * TILE, y = u.row * TILE;
-    const cx = x + TILE / 2, cy = y + TILE / 2;
-    const flash = u.flashT > 0;
-
-    // Range circle on hover
-    if (hoverCell && hoverCell.col === u.col && hoverCell.row === u.row) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(cx, cy, u.range * TILE, 0, Math.PI * 2);
-      ctx.stroke();
+    if (u.hp <= 0) continue;
+    if (u.flashT > 0) u.flashT -= dt;
+    if (u.atkCooldown > 0) u.atkCooldown -= dt;
+    const ux = (u.col + 0.5) * TILE, uy = (u.row + 0.5) * TILE;
+    let closest = null, closestDist = Infinity;
+    for (const e of enemies) {
+      if (e.dead || e.leaked) continue;
+      const d = dist(ux, uy, e.x, e.y);
+      if (d <= u.range * TILE && d < closestDist) { closest = e; closestDist = d; }
     }
-
-    // Body
-    ctx.fillStyle = flash ? '#ffffff' : u.color;
-    const pad = flash ? 2 : 4;
-    ctx.beginPath();
-    ctx.roundRect(x + pad, y + pad, TILE - pad * 2, TILE - pad * 2, 4);
-    ctx.fill();
-
-    // HP bar
-    const hpRatio = u.hp / u.maxHp;
-    ctx.fillStyle = '#333';
-    ctx.fillRect(x + 3, y + 2, TILE - 6, 3);
-    ctx.fillStyle = hpRatio > 0.5 ? '#2ecc71' : hpRatio > 0.25 ? '#f39c12' : '#e74c3c';
-    ctx.fillRect(x + 3, y + 2, (TILE - 6) * hpRatio, 3);
-  }
-}
-
-function drawEnemies() {
-  for (const e of enemies) {
-    if (e.dead || e.leaked) continue;
-    const w = TILE * 0.7, h = TILE * 0.5;
-    const x = e.x - w / 2, y = e.y - h / 2;
-    const flash = e.flashT > 0;
-
-    ctx.fillStyle = flash ? '#fff' : '#e74c3c';
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, 3);
-    ctx.fill();
-
-    // HP bar
-    const hpRatio = e.hp / e.maxHp;
-    ctx.fillStyle = '#333';
-    ctx.fillRect(x, y - 6, w, 4);
-    ctx.fillStyle = hpRatio > 0.5 ? '#2ecc71' : hpRatio > 0.25 ? '#f39c12' : '#e74c3c';
-    ctx.fillRect(x, y - 6, w * hpRatio, 4);
-  }
-}
-
-function drawParticles() {
-  for (const p of particles) {
-    const alpha = Math.min(1, p.t);
-    ctx.globalAlpha = alpha;
-    if (p.big) {
-      ctx.font = 'bold 22px Segoe UI';
-      ctx.fillStyle = p.color;
-      ctx.textAlign = 'center';
-      ctx.shadowColor = '#000';
-      ctx.shadowBlur = 8;
-      ctx.fillText(p.text, p.x, p.y);
-      ctx.shadowBlur = 0;
-    } else {
-      ctx.font = 'bold 13px Segoe UI';
-      ctx.fillStyle = p.color;
-      ctx.textAlign = 'center';
-      ctx.fillText(p.text, p.x, p.y);
+    if (closest && u.atkCooldown <= 0) {
+      u.atkCooldown = 1 / u.atkSpeed;
+      u.flashT = 0.12;
+      closest.hp -= u.dmg;
+      closest.flashT = 0.15;
+      particles.push({ x: closest.x, y: closest.y - 20, text: `-${u.dmg}`, t: 1.2, color: '#FF6B6B' });
+      if (closest.hp <= 0) { closest.dead = true; gold += 2; updateUI(); }
     }
-    ctx.globalAlpha = 1;
   }
-  ctx.textAlign = 'left';
-}
 
-function drawOverlay() {
-  if (phase === 'gameover') {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.font = 'bold 36px Segoe UI';
-    ctx.fillStyle = '#e74c3c';
-    ctx.textAlign = 'center';
-    ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
-    ctx.font = '18px Segoe UI';
-    ctx.fillStyle = '#aaa';
-    ctx.fillText(`Survived ${wave - 1} waves`, canvas.width / 2, canvas.height / 2 + 20);
-    ctx.fillText('Refresh to restart', canvas.width / 2, canvas.height / 2 + 50);
-    ctx.textAlign = 'left';
-  }
-}
+  // Remove dead units
+  units = units.filter(u => u.hp > 0);
 
-// Arrow path indicator
-function drawLaneArrows() {
-  ctx.fillStyle = 'rgba(255,255,255,0.08)';
-  ctx.font = `${Math.floor(TILE * 0.5)}px sans-serif`;
-  ctx.textAlign = 'center';
-  for (let r = 1; r < ROWS; r += 3) {
-    ctx.fillText('▼', (LANE_CENTER_COL + 0.5) * TILE, (r + 0.7) * TILE);
+  // Particles
+  particles = particles.filter(p => p.t > 0);
+  for (const p of particles) { p.t -= dt; p.y -= 22 * dt; }
+
+  // Wave done?
+  const alive = enemies.filter(e => !e.dead && !e.leaked);
+  if (alive.length === 0 && enemies.length > 0) {
+    const leaks = enemies.filter(e => e.leaked).length;
+    const bonus = leaks === 0 ? 5 : 0;
+    const income = 10 + wave;
+    gold += income + bonus;
+    wave++;
+    enemies = [];
+    particles.push({ x: canvas.width / 2, y: canvas.height / 2, text: leaks === 0 ? `✓ CLEAN! +${income + bonus}g` : `WAVE DONE +${income}g`, t: 2.5, color: leaks === 0 ? '#2ecc71' : '#f1c40f', big: true });
+    updateUI();
+    setTimeout(startBuildPhase, 2200);
+    phase = 'income';
   }
-  ctx.textAlign = 'left';
 }
 
 function draw() {
   ctx.fillStyle = '#1a1a2e';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  drawGrid();
-  drawLaneArrows();
-  drawUnits();
-  drawEnemies();
-  drawParticles();
-  drawOverlay();
+
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 0.5;
+  for (let c = 0; c <= COLS; c++) { ctx.beginPath(); ctx.moveTo(c*TILE,0); ctx.lineTo(c*TILE,canvas.height); ctx.stroke(); }
+  for (let r = 0; r <= ROWS; r++) { ctx.beginPath(); ctx.moveTo(0,r*TILE); ctx.lineTo(canvas.width,r*TILE); ctx.stroke(); }
+
+  // Lane hint
+  ctx.fillStyle = 'rgba(255,255,255,0.03)';
+  ctx.fillRect(LANE_COL_L * TILE, 0, 2 * TILE, canvas.height);
+
+  // Lane arrows
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.font = `${Math.floor(TILE*0.5)}px sans-serif`;
+  ctx.textAlign = 'center';
+  for (let r = 1; r < ROWS; r += 3) ctx.fillText('▼', LANE_X_CENTER, (r + 0.7) * TILE);
+
+  // Hover
+  if (hoverCell && phase === 'build' && selectedType) {
+    const { col, row } = hoverCell;
+    const valid = isValidPlacement(col, row);
+    ctx.fillStyle = valid ? 'rgba(255,255,255,0.1)' : 'rgba(255,0,0,0.15)';
+    ctx.fillRect(col*TILE, row*TILE, TILE, TILE);
+    if (valid) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc((col+0.5)*TILE, (row+0.5)*TILE, UNIT_DEFS[selectedType].range*TILE, 0, Math.PI*2);
+      ctx.stroke();
+    }
+  }
+
+  // Units
+  for (const u of units) {
+    const x = u.col*TILE, y = u.row*TILE, cx = x+TILE/2, cy = y+TILE/2;
+    if (hoverCell && hoverCell.col === u.col && hoverCell.row === u.row) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(cx, cy, u.range*TILE, 0, Math.PI*2); ctx.stroke();
+    }
+    const flash = u.flashT > 0;
+    const pad = flash ? 1 : 4;
+    ctx.fillStyle = flash ? '#fff' : u.color;
+    ctx.beginPath(); ctx.roundRect(x+pad, y+pad, TILE-pad*2, TILE-pad*2, 4); ctx.fill();
+    // HP bar
+    const hpR = u.hp / u.maxHp;
+    ctx.fillStyle = '#222'; ctx.fillRect(x+3, y+2, TILE-6, 3);
+    ctx.fillStyle = hpR > 0.5 ? '#2ecc71' : hpR > 0.25 ? '#f39c12' : '#e74c3c';
+    ctx.fillRect(x+3, y+2, (TILE-6)*hpR, 3);
+  }
+
+  // Enemies
+  for (const e of enemies) {
+    if (e.dead || e.leaked) continue;
+    const w = TILE*0.72, h = TILE*0.52;
+    const x = e.x - w/2, y = e.y - h/2;
+    ctx.fillStyle = e.flashT > 0 ? '#fff' : '#e74c3c';
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 3); ctx.fill();
+    // HP bar
+    const hpR = e.hp / e.maxHp;
+    ctx.fillStyle = '#333'; ctx.fillRect(x, y-6, w, 4);
+    ctx.fillStyle = hpR > 0.5 ? '#2ecc71' : hpR > 0.25 ? '#f39c12' : '#e74c3c';
+    ctx.fillRect(x, y-6, w*hpR, 4);
+  }
+
+  // Particles
+  for (const p of particles) {
+    ctx.globalAlpha = Math.min(1, p.t);
+    ctx.font = p.big ? 'bold 22px Segoe UI' : 'bold 13px Segoe UI';
+    ctx.fillStyle = p.color;
+    ctx.textAlign = 'center';
+    ctx.shadowColor = '#000'; ctx.shadowBlur = p.big ? 10 : 4;
+    ctx.fillText(p.text, p.x, p.y);
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+  ctx.textAlign = 'left';
+
+  // Overlays
+  if (phase === 'gameover') {
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 36px Segoe UI'; ctx.fillStyle = '#e74c3c';
+    ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 20);
+    ctx.font = '18px Segoe UI'; ctx.fillStyle = '#aaa';
+    ctx.fillText(`Survived ${wave-1} waves`, canvas.width/2, canvas.height/2+20);
+    ctx.fillText('Refresh to restart', canvas.width/2, canvas.height/2+50);
+    ctx.textAlign = 'left';
+  }
 }
 
-function loop(timestamp) {
-  const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
-  lastTime = timestamp;
+function loop(ts) {
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
   update(dt);
   draw();
   requestAnimationFrame(loop);
 }
 
-// Start
 startBuildPhase();
 updateUI();
 requestAnimationFrame(ts => { lastTime = ts; loop(ts); });
