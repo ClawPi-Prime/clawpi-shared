@@ -336,6 +336,41 @@ function update(dt) {
     }
   }
 
+  // Enemy separation (same as unit separation)
+  for (let i = 0; i < enemies.length; i++) {
+    if (enemies[i].dead || enemies[i].leaked) continue;
+    for (let j = i + 1; j < enemies.length; j++) {
+      if (enemies[j].dead || enemies[j].leaked) continue;
+      const dx = enemies[j].x - enemies[i].x, dy = enemies[j].y - enemies[i].y;
+      const d = Math.hypot(dx, dy), md = TILE * 0.65;
+      if (d < md && d > 0.1) {
+        const push = (md - d) / 2;
+        enemies[i].x -= (dx/d)*push; enemies[i].y -= (dy/d)*push;
+        enemies[j].x += (dx/d)*push; enemies[j].y += (dy/d)*push;
+        clampToField(enemies[i]); clampToField(enemies[j]);
+      }
+    }
+  }
+
+  // Leaked enemy separation in king room
+  for (let i = 0; i < leakedEnemies.length; i++) {
+    if (leakedEnemies[i].dead) continue;
+    for (let j = i + 1; j < leakedEnemies.length; j++) {
+      if (leakedEnemies[j].dead) continue;
+      const dx = leakedEnemies[j].x - leakedEnemies[i].x, dy = leakedEnemies[j].y - leakedEnemies[i].y;
+      const d = Math.hypot(dx, dy), md = KT * 0.65;
+      if (d < md && d > 0.1) {
+        const push = (md - d) / 2;
+        leakedEnemies[i].x -= (dx/d)*push; leakedEnemies[i].y -= (dy/d)*push;
+        leakedEnemies[j].x += (dx/d)*push; leakedEnemies[j].y += (dy/d)*push;
+        leakedEnemies[i].x = clamp(leakedEnemies[i].x, KT*0.3, kCanvas.width-KT*0.3);
+        leakedEnemies[i].y = clamp(leakedEnemies[i].y, KT*0.3, kCanvas.height-KT*0.3);
+        leakedEnemies[j].x = clamp(leakedEnemies[j].x, KT*0.3, kCanvas.width-KT*0.3);
+        leakedEnemies[j].y = clamp(leakedEnemies[j].y, KT*0.3, kCanvas.height-KT*0.3);
+      }
+    }
+  }
+
   // Particles
   particles = particles.filter(p => p.t > 0);
   for (const p of particles) { p.t -= dt; p.y -= 20 * dt; }
