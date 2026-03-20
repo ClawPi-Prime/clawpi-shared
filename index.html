@@ -7,20 +7,19 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; height: 100vh; overflow: hidden; }
-  #topbar { display: flex; gap: 40px; padding: 8px 20px; background: #16213e; width: 100%; justify-content: center; font-size: 17px; font-weight: bold; border-bottom: 2px solid #0f3460; }
-  .stat span:first-child { color: #aaa; font-size: 12px; font-weight: normal; margin-right: 5px; }
+  #topbar { display: flex; gap: 32px; padding: 7px 20px; background: #16213e; width: 100%; justify-content: center; font-size: 16px; font-weight: bold; border-bottom: 2px solid #0f3460; }
+  .stat span:first-child { color: #aaa; font-size: 11px; font-weight: normal; margin-right: 4px; }
   #gold-val { color: #FFD700; }
   #king-val { color: #e74c3c; }
   #wave-val { color: #3498db; }
-  #canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; gap: 16px; }
-  canvas { display: block; cursor: crosshair; }
-  #king-canvas { display: block; cursor: default; }
-  #bottombar { display: flex; gap: 10px; padding: 8px 20px; background: #16213e; width: 100%; justify-content: center; align-items: center; border-top: 2px solid #0f3460; flex-wrap: wrap; }
-  .unit-btn { padding: 7px 14px; border: 2px solid #444; border-radius: 6px; background: #0f3460; color: #eee; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+  #canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 4px; }
+  canvas { display: block; }
+  #bottombar { display: flex; gap: 8px; padding: 7px 16px; background: #16213e; width: 100%; justify-content: center; align-items: center; border-top: 2px solid #0f3460; flex-wrap: wrap; }
+  .unit-btn { padding: 6px 13px; border: 2px solid #444; border-radius: 6px; background: #0f3460; color: #eee; cursor: pointer; font-size: 12px; transition: all 0.15s; }
   .unit-btn:hover { border-color: #aaa; background: #1a4a8a; }
   .unit-btn.selected { border-color: #fff; background: #1a4a8a; box-shadow: 0 0 8px rgba(255,255,255,0.3); }
   .unit-btn .cost { color: #FFD700; font-size: 10px; }
-  #start-btn { padding: 9px 22px; border: none; border-radius: 8px; background: #27ae60; color: #fff; font-size: 14px; font-weight: bold; cursor: pointer; }
+  #start-btn { padding: 8px 20px; border: none; border-radius: 8px; background: #27ae60; color: #fff; font-size: 14px; font-weight: bold; cursor: pointer; }
   #start-btn:hover { background: #2ecc71; }
   #start-btn:disabled { background: #555; cursor: default; }
 </style>
@@ -29,12 +28,12 @@
 <div id="topbar">
   <div class="stat"><span>WAVE</span><span id="wave-val">1</span></div>
   <div class="stat"><span>GOLD</span><span id="gold-val">50g</span></div>
-  <div class="stat"><span>KING HP</span><span id="king-val">100</span></div>
+  <div class="stat"><span>KING HP</span><span id="king-val">20/20</span></div>
   <div class="stat"><span>PHASE</span><span id="phase-label">BUILD 30s</span></div>
 </div>
 <div id="canvas-wrap">
   <canvas id="gameCanvas"></canvas>
-  <canvas id="king-canvas"></canvas>
+  <canvas id="kingCanvas"></canvas>
 </div>
 <div id="bottombar">
   <button class="unit-btn" data-type="archer">🏹 Archer<br><span class="cost">10g | DMG:8 | RNG:3</span></button>
@@ -46,44 +45,35 @@
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-const kCanvas = document.getElementById('king-canvas');
+const kCanvas = document.getElementById('kingCanvas');
 const kCtx = kCanvas.getContext('2d');
 
-const COLS = 12, ROWS = 22; // 2 extra rows: row 0 = spawn zone, row 21 = exit portal zone
-let TILE = 32;
+// Grid: 12 cols x 20 rows — ALL inside play area
+// Row 0    = Spawn zone    (no placement, enemies enter here)
+// Rows 1-18 = Combat zone  (defenders placed here)
+// Row 19   = Exit portal   (no placement, enemies exit here)
+const COLS = 12, ROWS = 20;
+const SPAWN_ROW = 0, EXIT_ROW = 19;
+const LANE_X_TILE = 5.5; // lane center (cols 5-6)
 const GAME_SPEED = 2;
+let TILE = 30;
 
-// Layout:
-// Row 0: spawn zone (enemy entry)
-// Rows 1-19: play area
-// Row 20-21: exit portal zone
-const SPAWN_ROW = 0;
-const EXIT_ROW = 21;
-const LANE_COL = 5; // lane occupies cols 5-6
-const LANE_X = 5.5; // center in tiles
-
-// King room dimensions (separate canvas)
-const KING_COLS = 8, KING_ROWS = 8;
+// King's room
+const KC = 8, KR = 8; // king canvas cols/rows
+let KT = 30; // king tile size
 
 function resize() {
   const wrap = document.getElementById('canvas-wrap');
-  const availW = wrap.clientWidth - 40;
-  const availH = wrap.clientHeight - 10;
-  // King room takes ~30% width
-  const kingFraction = 0.28;
-  const mainFraction = 0.72;
-  const tileByW = Math.floor((availW * mainFraction) / COLS);
-  const tileByH = Math.floor(availH / ROWS);
-  TILE = Math.max(20, Math.min(tileByW, tileByH));
-  canvas.width = COLS * TILE;
-  canvas.height = ROWS * TILE;
-  const kt = Math.floor(Math.min((availW * kingFraction) / KING_COLS, availH / KING_ROWS));
-  kCanvas.width = KING_COLS * kt;
-  kCanvas.height = KING_ROWS * kt;
-  kCanvas._tile = kt;
+  const aw = wrap.clientWidth - 20, ah = wrap.clientHeight - 8;
+  // Main canvas ~72%, king ~28%
+  const mt = Math.floor(Math.min(aw * 0.72 / COLS, ah / ROWS));
+  TILE = Math.max(18, mt);
+  canvas.width = COLS * TILE; canvas.height = ROWS * TILE;
+  KT = Math.floor(Math.min(aw * 0.28 / KC, ah / KR));
+  KT = Math.max(16, KT);
+  kCanvas.width = KC * KT; kCanvas.height = KR * KT;
 }
-resize();
-window.addEventListener('resize', resize);
+resize(); window.addEventListener('resize', resize);
 
 const UNIT_DEFS = {
   archer: { cost:10, hp:50,  dmg:8,  range:3,   atkSpeed:1.0, moveSpeed:1.8, color:'#4CAF50' },
@@ -92,16 +82,26 @@ const UNIT_DEFS = {
   cannon: { cost:60, hp:120, dmg:60, range:3,    atkSpeed:0.3, moveSpeed:1.2, color:'#FF5722' },
 };
 
-let gold = 50, kingHp = 100, maxKingHp = 100, wave = 1;
-let phase = 'build', buildTimer = 30, lastTime = 0;
-let units = [], enemies = [], leakedEnemies = [], particles = [], kingParticles = [];
+let gold = 50;
+let kingHp = 20, maxKingHp = 20; // Low HP — leaking is punishing!
+let kingAtkCooldown = 0;
+let wave = 1, phase = 'build', buildTimer = 30, lastTime = 0;
+let units = [], enemies = [], leakedEnemies = [], particles = [], kParticles = [];
 let selectedType = null, hoverCell = null, buildInterval = null;
 
-function isOccupied(col, row) {
-  return units.some(u => u.homeCol === col && u.homeRow === row);
+// Bounds for units/enemies — always inside grid
+const MIN_X = TILE * 0.4, MAX_X_FN = () => canvas.width - TILE * 0.4;
+const MIN_Y = TILE * 0.4, MAX_Y_FN = () => canvas.height - TILE * 0.4;
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function clampToField(obj) {
+  obj.x = clamp(obj.x, TILE * 0.4, canvas.width - TILE * 0.4);
+  obj.y = clamp(obj.y, TILE * 0.4, canvas.height - TILE * 0.4);
 }
-function isPlayArea(col, row) {
-  return col >= 0 && col < COLS && row >= 1 && row <= 19 && !isOccupied(col, row);
+
+function isOccupied(col, row) { return units.some(u => u.homeCol === col && u.homeRow === row); }
+function isPlaceable(col, row) {
+  return col >= 0 && col < COLS && row >= 1 && row <= 18 && !isOccupied(col, row);
 }
 
 function makeUnit(col, row, type) {
@@ -120,13 +120,13 @@ function spawnWave() {
   const count = 8 + (wave - 1) * 3;
   const hp = Math.round(30 * Math.pow(1.2, wave - 1));
   const speed = (1 + (wave - 1) * 0.05) * TILE * 0.6;
-  // Spawn in spawn zone row 0
+  const lx = (LANE_X_TILE + 0.5) * TILE;
   for (let i = 0; i < count; i++) {
+    // Stagger spawn across row 0 — all inside grid
     enemies.push({
-      x: (LANE_X + 0.5) * TILE,
-      y: (-i * 50 - 20), // enter from above row 0
-      hp, maxHp: hp, speed,
-      dead: false, leaked: false, flashT: 0, atkCooldown: 0,
+      x: lx + (Math.random() - 0.5) * TILE * 0.5,
+      y: TILE * 0.5 + i * (TILE * 0.6), // spread down from row 0, still in grid
+      hp, maxHp: hp, speed, dead: false, leaked: false, flashT: 0, atkCooldown: 0,
     });
   }
 }
@@ -146,14 +146,15 @@ function startBuildPhase() {
     u.hp = u.maxHp; u.alive = true; u.flashT = 0; u.atkCooldown = 0;
   }
   leakedEnemies = [];
-  document.getElementById('start-btn').disabled = false; updateUI();
+  document.getElementById('start-btn').disabled = false;
+  updateUI();
   buildInterval = setInterval(() => { buildTimer--; updateUI(); if (buildTimer <= 0) startWave(); }, 1000);
 }
 
 function updateUI() {
   document.getElementById('wave-val').textContent = wave;
   document.getElementById('gold-val').textContent = gold + 'g';
-  document.getElementById('king-val').textContent = kingHp;
+  document.getElementById('king-val').textContent = `${kingHp}/${maxKingHp}`;
   const pl = document.getElementById('phase-label');
   pl.textContent = phase === 'build' ? `BUILD ${buildTimer}s` : phase === 'combat' ? 'COMBAT' : 'INCOME';
 }
@@ -175,8 +176,8 @@ canvas.addEventListener('click', e => {
   if (phase !== 'build' || !selectedType) return;
   const r = canvas.getBoundingClientRect();
   const col = Math.floor((e.clientX - r.left) / TILE), row = Math.floor((e.clientY - r.top) / TILE);
-  if (!isPlayArea(col, row)) { particles.push({ x: canvas.width/2, y: 100, text: 'Place in play area!', t:1.2, color:'#e74c3c', big:true }); return; }
-  if (gold < UNIT_DEFS[selectedType].cost) { particles.push({ x: canvas.width/2, y: 100, text: 'Not enough gold!', t:1.2, color:'#e74c3c', big:true }); return; }
+  if (!isPlaceable(col, row)) { particles.push({ x: canvas.width/2, y: 80, text: 'Place in combat zone (rows 1–18)!', t:1.5, color:'#e74c3c', big:true }); return; }
+  if (gold < UNIT_DEFS[selectedType].cost) { particles.push({ x: canvas.width/2, y: 80, text: 'Not enough gold!', t:1.3, color:'#e74c3c', big:true }); return; }
   gold -= UNIT_DEFS[selectedType].cost;
   units.push(makeUnit(col, row, selectedType));
   updateUI();
@@ -186,134 +187,171 @@ function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 function moveTo(obj, tx, ty, spd, dt) {
   const dx = tx - obj.x, dy = ty - obj.y, d = Math.hypot(dx, dy);
   if (d < 1) return;
-  const s = Math.min(spd * dt, d);
-  obj.x += (dx/d)*s; obj.y += (dy/d)*s;
+  obj.x += (dx / d) * Math.min(spd * dt, d);
+  obj.y += (dy / d) * Math.min(spd * dt, d);
+  clampToField(obj);
 }
 
 function update(dt) {
   if (phase !== 'combat') return;
   dt *= GAME_SPEED;
 
-  // --- Units move & attack ---
+  // --- UNITS: move toward enemies, stay in play area ---
   for (const u of units) {
     if (!u.alive) continue;
     if (u.flashT > 0) u.flashT -= dt;
     if (u.atkCooldown > 0) u.atkCooldown -= dt;
 
-    let closest = null, closestDist = Infinity;
-    let nearestEnemy = null, nearestDist = Infinity;
+    let closest = null, closestD = Infinity, nearestE = null, nearestD = Infinity;
     for (const e of enemies) {
       if (e.dead || e.leaked) continue;
       const d = dist(u.x, u.y, e.x, e.y);
-      if (d <= u.range * TILE && d < closestDist) { closest = e; closestDist = d; }
-      if (d < nearestDist) { nearestEnemy = e; nearestDist = d; }
+      if (d <= u.range * TILE && d < closestD) { closest = e; closestD = d; }
+      if (d < nearestD) { nearestE = e; nearestD = d; }
     }
 
     if (closest && u.atkCooldown <= 0) {
       u.atkCooldown = 1 / u.atkSpeed; u.flashT = 0.1;
       closest.hp -= u.dmg; closest.flashT = 0.12;
-      particles.push({ x: closest.x, y: closest.y - 18, text: `-${u.dmg}`, t:0.9, color:'#FF6B6B' });
+      particles.push({ x: closest.x, y: closest.y - 16, text: `-${u.dmg}`, t:0.9, color:'#FF6B6B' });
       if (closest.hp <= 0) { closest.dead = true; gold += 2; updateUI(); }
-    } else if (nearestEnemy && nearestDist > u.range * TILE * 0.8 && nearestDist <= u.range * TILE * 2.5) {
-      moveTo(u, nearestEnemy.x, nearestEnemy.y, u.moveSpeed, dt);
-    } else if (!nearestEnemy || nearestDist > u.range * TILE * 2.5) {
-      moveTo(u, (u.homeCol+0.5)*TILE, (u.homeRow+0.5)*TILE, u.moveSpeed * 0.5, dt);
+    } else if (nearestE && nearestD > u.range * TILE * 0.85 && nearestD <= u.range * TILE * 2.5) {
+      moveTo(u, nearestE.x, nearestE.y, u.moveSpeed, dt);
+    } else if (!nearestE || nearestD > u.range * TILE * 2.5) {
+      moveTo(u, (u.homeCol + 0.5) * TILE, (u.homeRow + 0.5) * TILE, u.moveSpeed * 0.5, dt);
     }
+
+    // Hard clamp to play area rows 0-19
+    u.x = clamp(u.x, TILE * 0.35, canvas.width - TILE * 0.35);
+    u.y = clamp(u.y, TILE * 0.35, canvas.height - TILE * 0.35);
   }
 
-  // Separation
+  // Unit separation
   for (let i = 0; i < units.length; i++) {
     if (!units[i].alive) continue;
-    for (let j = i+1; j < units.length; j++) {
+    for (let j = i + 1; j < units.length; j++) {
       if (!units[j].alive) continue;
       const dx = units[j].x - units[i].x, dy = units[j].y - units[i].y;
-      const d = Math.hypot(dx, dy), minD = TILE * 0.72;
-      if (d < minD && d > 0.1) {
-        const push = (minD - d) / 2;
+      const d = Math.hypot(dx, dy), md = TILE * 0.7;
+      if (d < md && d > 0.1) {
+        const push = (md - d) / 2;
         units[i].x -= (dx/d)*push; units[i].y -= (dy/d)*push;
         units[j].x += (dx/d)*push; units[j].y += (dy/d)*push;
+        clampToField(units[i]); clampToField(units[j]);
       }
     }
   }
 
-  // --- Enemies ---
+  // --- ENEMIES: fight defenders, march to exit portal (row 19), stay in grid ---
+  const exitY = (EXIT_ROW + 0.5) * TILE;
+  const lx = (LANE_X_TILE + 0.5) * TILE;
+
   for (const e of enemies) {
     if (e.dead || e.leaked) continue;
     if (e.flashT > 0) e.flashT -= dt;
     if (e.atkCooldown > 0) e.atkCooldown -= dt;
 
-    let nearestUnit = null, nearestDist = Infinity;
+    let nearestU = null, nearestUD = Infinity;
     for (const u of units) {
       if (!u.alive) continue;
       const d = dist(e.x, e.y, u.x, u.y);
-      if (d < nearestDist) { nearestUnit = u; nearestDist = d; }
+      if (d < nearestUD) { nearestU = u; nearestUD = d; }
     }
 
-    if (nearestUnit && nearestDist <= TILE * 1.1) {
+    if (nearestU && nearestUD <= TILE * 1.1) {
       // Fight
       if (e.atkCooldown <= 0) {
-        e.atkCooldown = 1.0; nearestUnit.hp -= 15; nearestUnit.flashT = 0.15;
-        particles.push({ x: nearestUnit.x, y: nearestUnit.y - 14, text: '-15', t:0.9, color:'#e74c3c' });
-        if (nearestUnit.hp <= 0) { nearestUnit.alive = false; nearestUnit.hp = 0; }
+        e.atkCooldown = 1.0; nearestU.hp -= 15; nearestU.flashT = 0.15;
+        particles.push({ x: nearestU.x, y: nearestU.y - 14, text: '-15', t:0.8, color:'#e74c3c' });
+        if (nearestU.hp <= 0) { nearestU.alive = false; nearestU.hp = 0; }
       }
-    } else if (nearestUnit && nearestDist < TILE * 5) {
-      moveTo(e, nearestUnit.x, nearestUnit.y, e.speed, dt);
+    } else if (nearestU && nearestUD < TILE * 5) {
+      moveTo(e, nearestU.x, nearestU.y, e.speed, dt);
     } else {
-      // March down lane toward exit portal (row 21)
-      moveTo(e, (LANE_X + 0.5) * TILE, (EXIT_ROW + 0.5) * TILE, e.speed, dt);
+      // March down lane to exit
+      moveTo(e, lx, exitY, e.speed, dt);
     }
 
-    // Reached exit portal (row 21 area)
-    if (e.y >= EXIT_ROW * TILE) {
+    // Clamp to grid
+    e.x = clamp(e.x, TILE * 0.3, canvas.width - TILE * 0.3);
+    e.y = clamp(e.y, TILE * 0.3, canvas.height - TILE * 0.3);
+
+    // Reached exit portal row
+    if (e.y >= EXIT_ROW * TILE + TILE * 0.6) {
       e.leaked = true;
-      // Teleport to king's room
+      // Teleport to king's room entrance
+      const kt = KT;
       leakedEnemies.push({
-        x: (KING_COLS / 2 + (Math.random()-0.5)*2) * (kCanvas._tile||32),
-        y: 1.5 * (kCanvas._tile||32),
-        hp: e.hp, maxHp: e.maxHp,
-        speed: e.speed * 1.2,
+        x: (KC / 2 + (Math.random() - 0.5) * 1.5) * kt,
+        y: kt * 1.2,
+        hp: Math.ceil(e.hp), maxHp: e.maxHp,
+        speed: e.speed * 1.3,
         dead: false, flashT: 0, atkCooldown: 0,
       });
     }
   }
 
-  // --- Leaked enemies in king's room ---
-  const kt = kCanvas._tile || 32;
-  const kingX = KING_COLS / 2 * kt, kingY = KING_ROWS * 0.75 * kt;
+  // --- KING'S ROOM: leaked enemies attack king, king fights back ---
+  const kw = kCanvas.width, kh = kCanvas.height;
+  const kingX = kw / 2, kingY = kh * 0.7;
+  if (kingAtkCooldown > 0) kingAtkCooldown -= dt;
+
   for (const e of leakedEnemies) {
     if (e.dead) continue;
     if (e.flashT > 0) e.flashT -= dt;
     if (e.atkCooldown > 0) e.atkCooldown -= dt;
     const d = dist(e.x, e.y, kingX, kingY);
-    if (d <= kt * 1.2) {
+    if (d <= KT * 1.1) {
+      // Attack king
       if (e.atkCooldown <= 0) {
-        e.atkCooldown = 1.5;
-        kingHp = Math.max(0, kingHp - 8);
-        kingParticles.push({ x: kingX + (Math.random()-0.5)*kt, y: kingY - kt*0.5, text: '-8', t:1.2, color:'#e74c3c' });
+        e.atkCooldown = 1.2;
+        kingHp = Math.max(0, kingHp - 10);
+        kParticles.push({ x: kingX + (Math.random()-0.5)*KT, y: kingY - KT*0.4, text: '-10', t:1.0, color:'#e74c3c' });
         updateUI();
         if (kingHp <= 0) { phase = 'gameover'; return; }
       }
     } else {
-      moveTo(e, kingX, kingY, e.speed * 1.5, dt);
+      // Move toward king, clamp to king canvas
+      const dx = kingX - e.x, dy = kingY - e.y, d2 = Math.hypot(dx, dy);
+      const s = Math.min(e.speed * 1.5 * dt, d2);
+      e.x += (dx/d2)*s; e.y += (dy/d2)*s;
+      e.x = clamp(e.x, KT*0.3, kw - KT*0.3);
+      e.y = clamp(e.y, KT*0.3, kh - KT*0.3);
+    }
+  }
+
+  // King auto-attacks nearest leaked enemy
+  if (kingAtkCooldown <= 0 && leakedEnemies.filter(e => !e.dead).length > 0) {
+    let target = null, tDist = Infinity;
+    for (const e of leakedEnemies) {
+      if (e.dead) continue;
+      const d = dist(e.x, e.y, kingX, kingY);
+      if (d < tDist) { target = e; tDist = d; }
+    }
+    if (target) {
+      kingAtkCooldown = 0.8;
+      target.hp -= 18; target.flashT = 0.15;
+      kParticles.push({ x: target.x, y: target.y - 12, text: '-18', t:0.8, color:'#FFD700' });
+      if (target.hp <= 0) { target.dead = true; }
     }
   }
 
   // Particles
   particles = particles.filter(p => p.t > 0);
   for (const p of particles) { p.t -= dt; p.y -= 20 * dt; }
-  kingParticles = kingParticles.filter(p => p.t > 0);
-  for (const p of kingParticles) { p.t -= dt; p.y -= 20 * dt; }
+  kParticles = kParticles.filter(p => p.t > 0);
+  for (const p of kParticles) { p.t -= dt; p.y -= 20 * dt; }
 
-  // Wave done?
+  // Wave complete?
   const mainAlive = enemies.filter(e => !e.dead && !e.leaked);
-  const kingRoomAlive = leakedEnemies.filter(e => !e.dead);
-  if (mainAlive.length === 0 && kingRoomAlive.length === 0 && enemies.length > 0) {
+  const kAlive = leakedEnemies.filter(e => !e.dead);
+  if (mainAlive.length === 0 && kAlive.length === 0 && enemies.length > 0) {
     const leaks = enemies.filter(e => e.leaked).length;
     const income = 10 + wave + (leaks === 0 ? 5 : 0);
     gold += income; wave++; enemies = []; leakedEnemies = [];
-    particles.push({ x: canvas.width/2, y: canvas.height/2, text: leaks === 0 ? `✓ CLEAN! +${income}g` : `WAVE DONE +${10+wave-1}g`, t:2.2, color: leaks===0?'#2ecc71':'#f1c40f', big:true });
+    particles.push({ x: canvas.width/2, y: canvas.height/2, text: leaks===0?`✓ CLEAN! +${income}g`:`WAVE DONE +${10+wave-1}g`, t:2.0, color:leaks===0?'#2ecc71':'#f1c40f', big:true });
     updateUI();
-    setTimeout(startBuildPhase, 2000);
+    setTimeout(startBuildPhase, 1800);
     phase = 'income';
   }
 }
@@ -323,76 +361,72 @@ function draw() {
   ctx.fillStyle = '#1a1a2e';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Spawn zone (row 0)
-  ctx.fillStyle = 'rgba(231,76,60,0.15)';
+  // Spawn zone highlight (row 0)
+  ctx.fillStyle = 'rgba(231,76,60,0.12)';
   ctx.fillRect(0, 0, canvas.width, TILE);
-  ctx.fillStyle = 'rgba(231,76,60,0.6)';
-  ctx.font = `${Math.floor(TILE*0.4)}px Segoe UI`; ctx.textAlign = 'center';
-  ctx.fillText('SPAWN', canvas.width/2, TILE*0.65);
-
-  // Exit portal zone (rows 20-21)
-  ctx.fillStyle = 'rgba(155,89,182,0.15)';
-  ctx.fillRect(0, 20*TILE, canvas.width, 2*TILE);
-  // Portal effect
-  const portalX = (LANE_X + 0.5) * TILE, portalY = (EXIT_ROW - 0.3) * TILE;
-  const grad = ctx.createRadialGradient(portalX, portalY, 2, portalX, portalY, TILE*0.9);
-  grad.addColorStop(0, 'rgba(155,89,182,0.9)');
-  grad.addColorStop(0.5, 'rgba(155,89,182,0.4)');
-  grad.addColorStop(1, 'rgba(155,89,182,0)');
-  ctx.fillStyle = grad;
-  ctx.beginPath(); ctx.ellipse(portalX, portalY, TILE*0.9, TILE*0.6, 0, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = 'rgba(200,150,255,0.9)';
+  ctx.fillStyle = 'rgba(231,76,60,0.5)';
   ctx.font = `bold ${Math.floor(TILE*0.38)}px Segoe UI`; ctx.textAlign = 'center';
-  ctx.fillText('EXIT PORTAL', canvas.width/2, ROWS*TILE - TILE*0.3);
+  ctx.fillText('⚡ SPAWN', canvas.width/2, TILE*0.65);
 
-  // Play area background (rows 1-19)
-  ctx.fillStyle = 'rgba(255,255,255,0.02)';
-  ctx.fillRect(0, TILE, canvas.width, 19*TILE);
+  // Exit portal zone (row 19)
+  ctx.fillStyle = 'rgba(155,89,182,0.12)';
+  ctx.fillRect(0, EXIT_ROW * TILE, canvas.width, TILE);
+  // Portal glow
+  const px = (LANE_X_TILE + 0.5) * TILE, py = (EXIT_ROW + 0.5) * TILE;
+  const g = ctx.createRadialGradient(px, py, 2, px, py, TILE * 0.85);
+  g.addColorStop(0, 'rgba(155,89,182,0.85)'); g.addColorStop(1, 'rgba(155,89,182,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(px, py, TILE*0.85, TILE*0.6, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'rgba(200,150,255,0.85)';
+  ctx.font = `bold ${Math.floor(TILE*0.38)}px Segoe UI`; ctx.textAlign='center';
+  ctx.fillText('🌀 EXIT PORTAL', canvas.width/2, py + TILE*0.2);
 
-  // Grid lines
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 0.5;
-  for (let c = 0; c <= COLS; c++) { ctx.beginPath(); ctx.moveTo(c*TILE,0); ctx.lineTo(c*TILE,canvas.height); ctx.stroke(); }
-  for (let r = 0; r <= ROWS; r++) { ctx.beginPath(); ctx.moveTo(0,r*TILE); ctx.lineTo(canvas.width,r*TILE); ctx.stroke(); }
+  // Combat zone background (rows 1-18)
+  ctx.fillStyle = 'rgba(255,255,255,0.015)';
+  ctx.fillRect(0, TILE, canvas.width, 18*TILE);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.055)'; ctx.lineWidth = 0.5;
+  for (let c=0;c<=COLS;c++){ctx.beginPath();ctx.moveTo(c*TILE,0);ctx.lineTo(c*TILE,canvas.height);ctx.stroke();}
+  for (let r=0;r<=ROWS;r++){ctx.beginPath();ctx.moveTo(0,r*TILE);ctx.lineTo(canvas.width,r*TILE);ctx.stroke();}
 
   // Lane hint
-  ctx.fillStyle = 'rgba(255,255,255,0.025)';
-  ctx.fillRect(LANE_COL*TILE, TILE, 2*TILE, 19*TILE);
-
-  // Lane arrows
-  ctx.fillStyle = 'rgba(255,255,255,0.07)';
-  ctx.font = `${Math.floor(TILE*0.45)}px sans-serif`; ctx.textAlign = 'center';
-  for (let r = 2; r < 20; r += 3) ctx.fillText('▼', (LANE_X+0.5)*TILE, (r+0.7)*TILE);
+  ctx.fillStyle = 'rgba(255,255,255,0.02)';
+  ctx.fillRect(5*TILE, 0, 2*TILE, canvas.height);
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.font = `${Math.floor(TILE*0.42)}px sans-serif`; ctx.textAlign = 'center';
+  for (let r=2;r<EXIT_ROW;r+=3) ctx.fillText('▼', px, (r+0.65)*TILE);
 
   // Hover
   if (hoverCell && phase === 'build' && selectedType) {
-    const {col,row} = hoverCell;
-    ctx.fillStyle = isPlayArea(col,row) ? 'rgba(255,255,255,0.1)' : 'rgba(255,0,0,0.15)';
-    ctx.fillRect(col*TILE,row*TILE,TILE,TILE);
-    if (isPlayArea(col,row)) {
-      ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1;
+    const {col, row} = hoverCell;
+    ctx.fillStyle = isPlaceable(col, row) ? 'rgba(255,255,255,0.09)' : 'rgba(255,0,0,0.14)';
+    ctx.fillRect(col*TILE, row*TILE, TILE, TILE);
+    if (isPlaceable(col, row)) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.17)'; ctx.lineWidth=1;
       ctx.beginPath(); ctx.arc((col+0.5)*TILE,(row+0.5)*TILE,UNIT_DEFS[selectedType].range*TILE,0,Math.PI*2); ctx.stroke();
     }
   }
 
   // Home markers during combat
   if (phase === 'combat') {
+    ctx.setLineDash([3,3]);
     for (const u of units) {
-      ctx.strokeStyle=`${u.color}44`; ctx.lineWidth=1; ctx.setLineDash([3,3]);
-      ctx.strokeRect(u.homeCol*TILE+4,u.homeRow*TILE+4,TILE-8,TILE-8);
-      ctx.setLineDash([]);
+      ctx.strokeStyle = u.color + '55'; ctx.lineWidth = 1;
+      ctx.strokeRect(u.homeCol*TILE+3, u.homeRow*TILE+3, TILE-6, TILE-6);
     }
+    ctx.setLineDash([]);
   }
 
   // Units
   for (const u of units) {
-    if (!u.alive && phase==='combat') continue;
+    if (!u.alive && phase === 'combat') continue;
     if (hoverCell && hoverCell.col===u.homeCol && hoverCell.row===u.homeRow) {
-      ctx.strokeStyle='rgba(255,255,255,0.2)'; ctx.lineWidth=1;
+      ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1;
       ctx.beginPath(); ctx.arc(u.x,u.y,u.range*TILE,0,Math.PI*2); ctx.stroke();
     }
-    const r = TILE*0.37;
-    ctx.fillStyle = u.flashT>0 ? '#fff' : u.color;
-    ctx.beginPath(); ctx.arc(u.x,u.y,r,0,Math.PI*2); ctx.fill();
+    const r = TILE * 0.36;
+    ctx.fillStyle = u.flashT > 0 ? '#fff' : u.color;
+    ctx.beginPath(); ctx.arc(u.x, u.y, r, 0, Math.PI*2); ctx.fill();
     const hpR = u.hp/u.maxHp;
     ctx.fillStyle='#111'; ctx.fillRect(u.x-r, u.y-r-5, r*2, 3);
     ctx.fillStyle = hpR>0.5?'#2ecc71':hpR>0.25?'#f39c12':'#e74c3c';
@@ -402,22 +436,22 @@ function draw() {
   // Enemies
   for (const e of enemies) {
     if (e.dead || e.leaked) continue;
-    const w=TILE*0.7,h=TILE*0.5;
-    ctx.fillStyle = e.flashT>0?'#fff':'#e74c3c';
-    ctx.beginPath(); ctx.roundRect(e.x-w/2,e.y-h/2,w,h,3); ctx.fill();
-    const hpR=e.hp/e.maxHp;
-    ctx.fillStyle='#333'; ctx.fillRect(e.x-w/2,e.y-h/2-6,w,4);
+    const w=TILE*0.68, h=TILE*0.48;
+    ctx.fillStyle = e.flashT>0 ? '#fff' : '#e74c3c';
+    ctx.beginPath(); ctx.roundRect(e.x-w/2, e.y-h/2, w, h, 3); ctx.fill();
+    const hpR = e.hp/e.maxHp;
+    ctx.fillStyle='#333'; ctx.fillRect(e.x-w/2, e.y-h/2-6, w, 4);
     ctx.fillStyle=hpR>0.5?'#2ecc71':hpR>0.25?'#f39c12':'#e74c3c';
-    ctx.fillRect(e.x-w/2,e.y-h/2-6,w*hpR,4);
+    ctx.fillRect(e.x-w/2, e.y-h/2-6, w*hpR, 4);
   }
 
   // Particles
   for (const p of particles) {
-    ctx.globalAlpha=Math.min(1,p.t);
-    ctx.font=p.big?'bold 20px Segoe UI':'bold 12px Segoe UI';
-    ctx.fillStyle=p.color; ctx.textAlign='center';
-    ctx.shadowColor='#000'; ctx.shadowBlur=p.big?8:3;
-    ctx.fillText(p.text,p.x,p.y);
+    ctx.globalAlpha = Math.min(1, p.t);
+    ctx.font = p.big ? 'bold 19px Segoe UI' : 'bold 12px Segoe UI';
+    ctx.fillStyle = p.color; ctx.textAlign='center';
+    ctx.shadowColor='#000'; ctx.shadowBlur = p.big?8:3;
+    ctx.fillText(p.text, p.x, p.y);
     ctx.shadowBlur=0; ctx.globalAlpha=1;
   }
   ctx.textAlign='left';
@@ -425,118 +459,110 @@ function draw() {
   if (phase==='gameover') {
     ctx.fillStyle='rgba(0,0,0,0.75)'; ctx.fillRect(0,0,canvas.width,canvas.height);
     ctx.textAlign='center';
-    ctx.font='bold 34px Segoe UI'; ctx.fillStyle='#e74c3c';
-    ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2-18);
-    ctx.font='17px Segoe UI'; ctx.fillStyle='#aaa';
+    ctx.font='bold 32px Segoe UI'; ctx.fillStyle='#e74c3c';
+    ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2-16);
+    ctx.font='16px Segoe UI'; ctx.fillStyle='#aaa';
     ctx.fillText(`Survived ${wave-1} waves`, canvas.width/2, canvas.height/2+18);
-    ctx.fillText('Refresh to restart', canvas.width/2, canvas.height/2+46);
+    ctx.fillText('Refresh to restart', canvas.width/2, canvas.height/2+44);
     ctx.textAlign='left';
   }
 }
 
 // ---- DRAW KING'S ROOM ----
 function drawKingRoom() {
-  const kt = kCanvas._tile || 32;
-  const kw = KING_COLS * kt, kh = KING_ROWS * kt;
-  kCtx.fillStyle = '#0d1b2a';
-  kCtx.fillRect(0, 0, kw, kh);
+  const kw = kCanvas.width, kh = kCanvas.height;
+  kCtx.fillStyle = '#0d1b2a'; kCtx.fillRect(0, 0, kw, kh);
 
-  // Room border
+  // Border
   kCtx.strokeStyle = '#8e44ad'; kCtx.lineWidth = 3;
   kCtx.strokeRect(2, 2, kw-4, kh-4);
 
-  // Title
-  kCtx.fillStyle = 'rgba(142,68,173,0.15)';
-  kCtx.fillRect(2, 2, kw-4, kt*1.1);
-  kCtx.fillStyle = '#c39bd3'; kCtx.font = `bold ${Math.floor(kt*0.45)}px Segoe UI`;
-  kCtx.textAlign = 'center';
-  kCtx.fillText("KING'S CHAMBER", kw/2, kt*0.75);
+  // Title bar
+  kCtx.fillStyle = 'rgba(142,68,173,0.18)'; kCtx.fillRect(2, 2, kw-4, KT*1.1);
+  kCtx.fillStyle = '#c39bd3'; kCtx.font = `bold ${Math.floor(KT*0.4)}px Segoe UI`; kCtx.textAlign='center';
+  kCtx.fillText("KING'S CHAMBER", kw/2, KT*0.72);
 
-  // Grid lines (subtle)
-  kCtx.strokeStyle = 'rgba(255,255,255,0.04)'; kCtx.lineWidth = 0.5;
-  for (let c=0;c<=KING_COLS;c++){kCtx.beginPath();kCtx.moveTo(c*kt,0);kCtx.lineTo(c*kt,kh);kCtx.stroke();}
-  for (let r=0;r<=KING_ROWS;r++){kCtx.beginPath();kCtx.moveTo(0,r*kt);kCtx.lineTo(kw,r*kt);kCtx.stroke();}
+  // Grid
+  kCtx.strokeStyle='rgba(255,255,255,0.04)'; kCtx.lineWidth=0.5;
+  for(let c=0;c<=KC;c++){kCtx.beginPath();kCtx.moveTo(c*KT,0);kCtx.lineTo(c*KT,kh);kCtx.stroke();}
+  for(let r=0;r<=KR;r++){kCtx.beginPath();kCtx.moveTo(0,r*KT);kCtx.lineTo(kw,r*KT);kCtx.stroke();}
 
-  // King
-  const kingX = kw/2, kingY = kh * 0.72;
-  const kingR = kt * 0.55;
+  const kingX = kw/2, kingY = kh*0.65, kingR = KT*0.52;
 
   // King glow
-  const glow = kCtx.createRadialGradient(kingX, kingY, 0, kingX, kingY, kingR*2);
-  glow.addColorStop(0, 'rgba(255,215,0,0.3)');
-  glow.addColorStop(1, 'rgba(255,215,0,0)');
-  kCtx.fillStyle = glow;
-  kCtx.beginPath(); kCtx.arc(kingX, kingY, kingR*2, 0, Math.PI*2); kCtx.fill();
+  const glow = kCtx.createRadialGradient(kingX,kingY,0,kingX,kingY,kingR*2.2);
+  glow.addColorStop(0,'rgba(255,215,0,0.25)'); glow.addColorStop(1,'rgba(255,215,0,0)');
+  kCtx.fillStyle=glow; kCtx.beginPath(); kCtx.arc(kingX,kingY,kingR*2.2,0,Math.PI*2); kCtx.fill();
 
   // King body
-  kCtx.fillStyle = kingHp > 50 ? '#f39c12' : kingHp > 25 ? '#e67e22' : '#c0392b';
-  kCtx.beginPath(); kCtx.arc(kingX, kingY, kingR, 0, Math.PI*2); kCtx.fill();
-  kCtx.strokeStyle = '#FFD700'; kCtx.lineWidth = 2;
-  kCtx.beginPath(); kCtx.arc(kingX, kingY, kingR, 0, Math.PI*2); kCtx.stroke();
+  const hpR = kingHp/maxKingHp;
+  kCtx.fillStyle = hpR>0.5?'#f39c12':hpR>0.25?'#e67e22':'#c0392b';
+  kCtx.beginPath(); kCtx.arc(kingX,kingY,kingR,0,Math.PI*2); kCtx.fill();
+  kCtx.strokeStyle='#FFD700'; kCtx.lineWidth=2.5;
+  kCtx.beginPath(); kCtx.arc(kingX,kingY,kingR,0,Math.PI*2); kCtx.stroke();
 
   // Crown
-  const crownY = kingY - kingR;
-  kCtx.fillStyle = '#FFD700';
+  const cy = kingY - kingR;
+  kCtx.fillStyle='#FFD700';
   kCtx.beginPath();
-  kCtx.moveTo(kingX - kt*0.35, crownY);
-  kCtx.lineTo(kingX - kt*0.35, crownY - kt*0.28);
-  kCtx.lineTo(kingX - kt*0.17, crownY - kt*0.14);
-  kCtx.lineTo(kingX, crownY - kt*0.32);
-  kCtx.lineTo(kingX + kt*0.17, crownY - kt*0.14);
-  kCtx.lineTo(kingX + kt*0.35, crownY - kt*0.28);
-  kCtx.lineTo(kingX + kt*0.35, crownY);
+  kCtx.moveTo(kingX-KT*0.33, cy);
+  kCtx.lineTo(kingX-KT*0.33, cy-KT*0.27);
+  kCtx.lineTo(kingX-KT*0.16, cy-KT*0.13);
+  kCtx.lineTo(kingX, cy-KT*0.3);
+  kCtx.lineTo(kingX+KT*0.16, cy-KT*0.13);
+  kCtx.lineTo(kingX+KT*0.33, cy-KT*0.27);
+  kCtx.lineTo(kingX+KT*0.33, cy);
   kCtx.closePath(); kCtx.fill();
 
-  // King HP bar
-  const barW = kw * 0.75, barH = kt * 0.35;
-  const barX = (kw - barW) / 2, barY = kingY + kingR + kt * 0.2;
-  const hpR = kingHp / maxKingHp;
-  kCtx.fillStyle = '#222'; kCtx.fillRect(barX, barY, barW, barH);
-  kCtx.fillStyle = hpR > 0.5 ? '#2ecc71' : hpR > 0.25 ? '#f39c12' : '#e74c3c';
-  kCtx.fillRect(barX, barY, barW * hpR, barH);
-  kCtx.strokeStyle = '#555'; kCtx.lineWidth = 1; kCtx.strokeRect(barX, barY, barW, barH);
-  kCtx.fillStyle = '#fff'; kCtx.font = `bold ${Math.floor(kt*0.3)}px Segoe UI`;
-  kCtx.textAlign = 'center';
-  kCtx.fillText(`${kingHp} / ${maxKingHp}`, kw/2, barY + barH*0.78);
+  // Attack indicator (flash when king attacks)
+  if (kingAtkCooldown > 0.65) {
+    kCtx.strokeStyle='rgba(255,215,0,0.6)'; kCtx.lineWidth=2;
+    kCtx.beginPath(); kCtx.arc(kingX,kingY,kingR*1.6,0,Math.PI*2); kCtx.stroke();
+  }
 
-  // Leaked enemies in king's room
+  // HP bar
+  const bw = kw*0.72, bh = KT*0.34;
+  const bx = (kw-bw)/2, by = kingY + kingR + KT*0.22;
+  kCtx.fillStyle='#1a1a2e'; kCtx.fillRect(bx,by,bw,bh);
+  kCtx.fillStyle = hpR>0.5?'#2ecc71':hpR>0.25?'#f39c12':'#e74c3c';
+  kCtx.fillRect(bx,by,bw*hpR,bh);
+  kCtx.strokeStyle='#555'; kCtx.lineWidth=1; kCtx.strokeRect(bx,by,bw,bh);
+  kCtx.fillStyle='#fff'; kCtx.font=`bold ${Math.floor(KT*0.28)}px Segoe UI`; kCtx.textAlign='center';
+  kCtx.fillText(`${kingHp} / ${maxKingHp}`, kw/2, by+bh*0.8);
+
+  // Leaked enemies
   for (const e of leakedEnemies) {
     if (e.dead) continue;
-    const ew = kt*0.6, eh = kt*0.45;
-    kCtx.fillStyle = e.flashT > 0 ? '#fff' : '#e74c3c';
-    kCtx.beginPath(); kCtx.roundRect(e.x-ew/2, e.y-eh/2, ew, eh, 3); kCtx.fill();
-    const eHpR = e.hp/e.maxHp;
-    kCtx.fillStyle='#333'; kCtx.fillRect(e.x-ew/2, e.y-eh/2-5, ew, 3);
-    kCtx.fillStyle=eHpR>0.5?'#2ecc71':eHpR>0.25?'#f39c12':'#e74c3c';
-    kCtx.fillRect(e.x-ew/2, e.y-eh/2-5, ew*eHpR, 3);
+    const ew=KT*0.58,eh=KT*0.42;
+    kCtx.fillStyle = e.flashT>0?'#fff':'#e74c3c';
+    kCtx.beginPath(); kCtx.roundRect(e.x-ew/2,e.y-eh/2,ew,eh,3); kCtx.fill();
+    const er=e.hp/e.maxHp;
+    kCtx.fillStyle='#333'; kCtx.fillRect(e.x-ew/2,e.y-eh/2-5,ew,3);
+    kCtx.fillStyle=er>0.5?'#2ecc71':er>0.25?'#f39c12':'#e74c3c';
+    kCtx.fillRect(e.x-ew/2,e.y-eh/2-5,ew*er,3);
   }
 
   // King room particles
-  for (const p of kingParticles) {
-    kCtx.globalAlpha = Math.min(1, p.t);
-    kCtx.font = 'bold 13px Segoe UI'; kCtx.fillStyle = p.color;
-    kCtx.textAlign = 'center';
+  for (const p of kParticles) {
+    kCtx.globalAlpha=Math.min(1,p.t);
+    kCtx.font=`bold ${Math.floor(KT*0.4)}px Segoe UI`; kCtx.fillStyle=p.color; kCtx.textAlign='center';
     kCtx.shadowColor='#000'; kCtx.shadowBlur=4;
     kCtx.fillText(p.text, p.x, p.y);
     kCtx.shadowBlur=0; kCtx.globalAlpha=1;
   }
+  kCtx.textAlign='left';
 
-  // Teleport flash when enemy arrives
-  kCtx.textAlign = 'left';
-
-  // Game over overlay on king room
-  if (phase === 'gameover') {
-    kCtx.fillStyle = 'rgba(0,0,0,0.8)'; kCtx.fillRect(0,0,kw,kh);
+  if (phase==='gameover') {
+    kCtx.fillStyle='rgba(0,0,0,0.82)'; kCtx.fillRect(0,0,kw,kh);
     kCtx.textAlign='center';
-    kCtx.font=`bold ${Math.floor(kt*0.7)}px Segoe UI`; kCtx.fillStyle='#c0392b';
-    kCtx.fillText('☠', kw/2, kh/2+kt*0.2);
+    kCtx.font=`${Math.floor(KT*0.9)}px Segoe UI`; kCtx.fillStyle='#c0392b';
+    kCtx.fillText('☠', kw/2, kh/2+KT*0.3);
     kCtx.textAlign='left';
   }
 }
 
 function loop(ts) {
-  const dt = Math.min((ts - lastTime) / 1000, 0.05);
-  lastTime = ts;
+  const dt = Math.min((ts - lastTime)/1000, 0.05); lastTime = ts;
   update(dt); draw(); drawKingRoom();
   requestAnimationFrame(loop);
 }
