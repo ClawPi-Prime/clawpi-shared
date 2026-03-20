@@ -114,6 +114,8 @@ function startWave() {
 function startBuildPhase() {
   phase = 'build';
   buildTimer = 30;
+  // Respawn all defenders to full HP
+  for (const u of units) { u.hp = u.maxHp; u.flashT = 0; u.atkCooldown = 0; }
   document.getElementById('start-btn').disabled = false;
   updateUI();
   buildInterval = setInterval(() => {
@@ -216,7 +218,7 @@ function update(dt) {
 
   // --- Units attack enemies ---
   for (const u of units) {
-    if (u.hp <= 0) continue;
+    if (u.hp <= 0) continue; // dead this wave
     if (u.flashT > 0) u.flashT -= dt;
     if (u.atkCooldown > 0) u.atkCooldown -= dt;
     const ux = (u.col + 0.5) * TILE, uy = (u.row + 0.5) * TILE;
@@ -236,8 +238,8 @@ function update(dt) {
     }
   }
 
-  // Remove dead units
-  units = units.filter(u => u.hp > 0);
+  // Mark dead units (don't remove — they respawn after wave)
+  for (const u of units) { if (u.hp <= 0) u.hp = 0; }
 
   // Particles
   particles = particles.filter(p => p.t > 0);
@@ -296,6 +298,7 @@ function draw() {
 
   // Units
   for (const u of units) {
+    if (u.hp <= 0 && phase === 'combat') continue; // show as dead during combat
     const x = u.col*TILE, y = u.row*TILE, cx = x+TILE/2, cy = y+TILE/2;
     if (hoverCell && hoverCell.col === u.col && hoverCell.row === u.row) {
       ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
