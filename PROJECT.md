@@ -4,9 +4,14 @@ This file is injected into every session. Keep it up to date so all channel-sess
 
 ## What We're Building
 
-**Legion TD Web** — a browser-based version of Legion TD 2 (tower defense game).
-- Research doc: `docs/game-design-research.md`
-- Repo: https://github.com/ClawPi-Prime/clawpi-shared
+**Legion TD Web** — a browser-based multiplayer tower defence game (Legion TD variant).
+
+## Repositories
+
+- **clawpi-project/project** — Requirements, architecture, design docs (the source of truth for specs)
+  - Requirements: https://github.com/clawpi-project/project/blob/main/Game%20Requirements.md
+- **ClawPi-Prime/legion-td-web** — Game source code (frontend + backend + k8s)
+- **ClawPi-Prime/clawpi-shared** — Agent workspace, memory, learnings, daily notes
 
 ## People
 
