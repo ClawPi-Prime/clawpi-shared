@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Legion TD Web — Prototype</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; height: 100vh; overflow: hidden; }
+  #topbar { display: flex; gap: 32px; padding: 7px 20px; background: #16213e; width: 100%; justify-content: center; font-size: 16px; font-weight: bold; border-bottom: 2px solid #0f3460; }
+  .stat span:first-child { color: #aaa; font-size: 11px; font-weight: normal; margin-right: 4px; }
+  #gold-val { color: #FFD700; }
+  #king-val { color: #e74c3c; }
+  #wave-val { color: #3498db; }
+  #canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 4px; }
+  canvas { display: block; }
+  #bottombar { display: flex; gap: 8px; padding: 7px 16px; background: #16213e; width: 100%; justify-content: center; align-items: center; border-top: 2px solid #0f3460; flex-wrap: wrap; }
+  .unit-btn { padding: 6px 13px; border: 2px solid #444; border-radius: 6px; background: #0f3460; color: #eee; cursor: pointer; font-size: 12px; transition: all 0.15s; }
+  .unit-btn:hover { border-color: #aaa; background: #1a4a8a; }
+  .unit-btn.selected { border-color: #fff; background: #1a4a8a; box-shadow: 0 0 8px rgba(255,255,255,0.3); }
+  .unit-btn .cost { color: #FFD700; font-size: 10px; }
+  #start-btn { padding: 8px 20px; border: none; border-radius: 8px; background: #27ae60; color: #fff; font-size: 14px; font-weight: bold; cursor: pointer; }
+  #start-btn:hover { background: #2ecc71; }
+  #start-btn:disabled { background: #555; cursor: default; }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <div class="stat"><span>WAVE</span><span id="wave-val">1</span></div>
+  <div class="stat"><span>GOLD</span><span id="gold-val">50g</span></div>
+  <div class="stat"><span>KING HP</span><span id="king-val">20/20</span></div>
+  <div class="stat"><span>PHASE</span><span id="phase-label">BUILD 30s</span></div>
+</div>
+<div id="canvas-wrap">
+  <canvas id="gameCanvas"></canvas>
+  <canvas id="kingCanvas"></canvas>
+</div>
+<div id="bottombar">
+  <button class="unit-btn" data-type="archer">🏹 Archer<br><span class="cost">10g | DMG:8 | RNG:3</span></button>
+  <button class="unit-btn" data-type="knight">⚔️ Knight<br><span class="cost">25g | DMG:20 | RNG:1.5</span></button>
+  <button class="unit-btn" data-type="mage">🔮 Mage<br><span class="cost">40g | DMG:35 | RNG:4</span></button>
+  <button class="unit-btn" data-type="cannon">💣 Cannon<br><span class="cost">60g | DMG:60 | RNG:3</span></button>
+  <button id="start-btn">▶ Start Wave</button>
+</div>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const kCanvas = document.getElementById('kingCanvas');
+const kCtx = kCanvas.getContext('2d');
+
+// Grid: 12 cols x 20 rows — ALL inside play area
+// Row 0    = Spawn zone    (no placement, enemies enter here)
+// Rows 1-18 = Combat zone  (defenders placed here)
+// Row 19   = Exit portal   (no placement, enemies exit here)
+const COLS = 12, ROWS = 20;
+const SPAWN_ROW = 0, EXIT_ROW = 19;
+const LANE_X_TILE = 5.5; // lane center (cols 5-6)
+const GAME_SPEED = 2;
+let TILE = 30;
+
+// King's room
+const KC = 8, KR = 8; // king canvas cols/rows
+let KT = 30; // king tile size
+
+function resize() {
+  const wrap = document.getElementById('canvas-wrap');
+  const aw = wrap.clientWidth - 20, ah = wrap.clientHeight - 8;
+  // Main canvas ~72%, king ~28%
+  const mt = Math.floor(Math.min(aw * 0.72 / COLS, ah / ROWS));
+  TILE = Math.max(18, mt);
+  canvas.width = COLS * TILE; canvas.height = ROWS * TILE;
+  KT = Math.floor(Math.min(aw * 0.28 / KC, ah / KR));
+  KT = Math.max(16, KT);
+  kCanvas.width = KC * KT; kCanvas.height = KR * KT;
+}
+resize(); window.addEventListener('resize', resize);
+
+const UNIT_DEFS = {
+  archer: { cost:10, hp:50,  dmg:10, range:3,   atkSpeed:1.0, moveSpeed:1.8, color:'#4CAF50' },
+  knight: { cost:25, hp:150, dmg:20, range:1.5,  atkSpeed:0.8, moveSpeed:2.2, color:'#2196F3' },
+  mage:   { cost:40, hp:80,  dmg:35, range:4,    atkSpeed:0.5, moveSpeed:1.5, color:'#9C27B0' },
+  cannon: { cost:60, hp:120, dmg:60, range:3,    atkSpeed:0.3, moveSpeed:1.2, color:'#FF5722' },
+};
+
+let gold = 50;
+let kingHp = 20, maxKingHp = 20; // Low HP — leaking is punishing!
+let kingAtkCooldown = 0;
+let wave = 1, phase = 'build', buildTimer = 30, lastTime = 0;
+let units = [], enemies = [], leakedEnemies = [], particles = [], kParticles = [];
+let selectedType = null, hoverCell = null, buildInterval = null;
+
+// Bounds for units/enemies — always inside grid
+const MIN_X = TILE * 0.4, MAX_X_FN = () => canvas.width - TILE * 0.4;
+const MIN_Y = TILE * 0.4, MAX_Y_FN = () => canvas.height - TILE * 0.4;
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function clampToField(obj) {
+  obj.x = clamp(obj.x, TILE * 0.4, canvas.width - TILE * 0.4);
+  obj.y = clamp(obj.y, TILE * 0.4, canvas.height - TILE * 0.4);
+}
+
+function isOccupied(col, row) { return units.some(u => u.homeCol === col && u.homeRow === row); }
+function isPlaceable(col, row) {
+  return col >= 0 && col < COLS && row >= 1 && row <= 18 && !isOccupied(col, row);
+}
+
+function makeUnit(col, row, type) {
+  const d = UNIT_DEFS[type];
+  return {
+    homeCol: col, homeRow: row,
+    x: (col + 0.5) * TILE, y: (row + 0.5) * TILE,
+    type, color: d.color,
+    hp: d.hp, maxHp: d.hp, dmg: d.dmg, range: d.range,
+    atkSpeed: d.atkSpeed, moveSpeed: d.moveSpeed * TILE,
+    atkCooldown: 0, flashT: 0, alive: true,
+  };
+}
+
+function spawnWave() {
+  const count = 8 + (wave - 1) * 3;
+  const hp = Math.round(30 * Math.pow(1.2, wave - 1));
+  const speed = (1 + (wave - 1) * 0.05) * TILE * 0.6;
+  // Spawn enemies horizontally across row 0, spread across full width
+  // so they don't pile on top of defenders placed near the top
+  const spacing = (canvas.width - TILE) / Math.max(count - 1, 1);
+  for (let i = 0; i < count; i++) {
+    const ex = TILE * 0.5 + i * spacing;
+    const ey = TILE * 0.5; // center of row 0
+    enemies.push({
+      x: clamp(ex, TILE*0.4, canvas.width - TILE*0.4),
+      y: ey,
+      hp, maxHp: hp, speed, dead: false, leaked: false,
+      flashT: 0, atkCooldown: 0, alert: null, // alert = alerted enemy target
+    });
+  }
+}
+
+function startWave() {
+  if (phase !== 'build') return;
+  clearInterval(buildInterval); buildInterval = null;
+  phase = 'combat'; spawnWave();
+  document.getElementById('start-btn').disabled = true;
+  updateUI();
+}
+
+function startBuildPhase() {
+  phase = 'build'; buildTimer = 30;
+  for (const u of units) {
+    u.x = (u.homeCol + 0.5) * TILE; u.y = (u.homeRow + 0.5) * TILE;
+    u.hp = u.maxHp; u.alive = true; u.flashT = 0; u.atkCooldown = 0;
+  }
+  leakedEnemies = [];
+  document.getElementById('start-btn').disabled = false;
+  updateUI();
+  buildInterval = setInterval(() => { buildTimer--; updateUI(); if (buildTimer <= 0) startWave(); }, 1000);
+}
+
+function updateUI() {
+  document.getElementById('wave-val').textContent = wave;
+  document.getElementById('gold-val').textContent = gold + 'g';
+  document.getElementById('king-val').textContent = `${kingHp}/${maxKingHp}`;
+  const pl = document.getElementById('phase-label');
+  pl.textContent = phase === 'build' ? `BUILD ${buildTimer}s` : phase === 'combat' ? 'COMBAT' : 'INCOME';
+}
+
+document.querySelectorAll('.unit-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const t = btn.dataset.type;
+    selectedType = selectedType === t ? null : t;
+    document.querySelectorAll('.unit-btn').forEach(b => b.classList.toggle('selected', b.dataset.type === selectedType));
+  });
+});
+document.getElementById('start-btn').addEventListener('click', startWave);
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  hoverCell = { col: Math.floor((e.clientX - r.left) / TILE), row: Math.floor((e.clientY - r.top) / TILE) };
+});
+canvas.addEventListener('mouseleave', () => hoverCell = null);
+canvas.addEventListener('click', e => {
+  if (phase !== 'build' || !selectedType) return;
+  const r = canvas.getBoundingClientRect();
+  const col = Math.floor((e.clientX - r.left) / TILE), row = Math.floor((e.clientY - r.top) / TILE);
+  if (!isPlaceable(col, row)) { particles.push({ x: canvas.width/2, y: 80, text: 'Place in combat zone (rows 1–18)!', t:1.5, color:'#e74c3c', big:true }); return; }
+  if (gold < UNIT_DEFS[selectedType].cost) { particles.push({ x: canvas.width/2, y: 80, text: 'Not enough gold!', t:1.3, color:'#e74c3c', big:true }); return; }
+  gold -= UNIT_DEFS[selectedType].cost;
+  units.push(makeUnit(col, row, selectedType));
+  updateUI();
+});
+
+function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+function moveTo(obj, tx, ty, spd, dt) {
+  const dx = tx - obj.x, dy = ty - obj.y, d = Math.hypot(dx, dy);
+  if (d < 1) return;
+  obj.x += (dx / d) * Math.min(spd * dt, d);
+  obj.y += (dy / d) * Math.min(spd * dt, d);
+  clampToField(obj);
+}
+
+function update(dt) {
+  if (phase !== 'combat') return;
+  dt *= GAME_SPEED;
+
+  // --- UNITS: move toward enemies, stay in play area ---
+  for (const u of units) {
+    if (!u.alive) continue;
+    if (u.flashT > 0) u.flashT -= dt;
+    if (u.atkCooldown > 0) u.atkCooldown -= dt;
+
+    // Use alerted target if set, otherwise find own target
+    let closest = u.alert && !u.alert.dead && !u.alert.leaked ? u.alert : null;
+    let closestD = closest ? dist(u.x, u.y, closest.x, closest.y) : Infinity;
+    let nearestE = null, nearestD = Infinity;
+
+    for (const e of enemies) {
+      if (e.dead || e.leaked) continue;
+      const d = dist(u.x, u.y, e.x, e.y);
+      if (d <= u.range * TILE && d < closestD) { closest = e; closestD = d; }
+      if (d < nearestD) { nearestE = e; nearestD = d; }
+    }
+    u.alert = null; // reset alert each tick — re-applied by squad logic below
+
+    if (closest && u.atkCooldown <= 0) {
+      u.atkCooldown = 1 / u.atkSpeed; u.flashT = 0.1;
+      closest.hp -= u.dmg; closest.flashT = 0.12;
+      particles.push({ x: closest.x, y: closest.y - 16, text: `-${u.dmg}`, t:0.9, color:'#FF6B6B' });
+      if (closest.hp <= 0) { closest.dead = true; gold += 2; updateUI(); }
+      // Squad alert: tell nearby friendly units about this enemy
+      for (const ally of units) {
+        if (!ally.alive || ally === u) continue;
+        if (!ally.alert && dist(u.x, u.y, ally.x, ally.y) <= TILE * 3) {
+          ally.alert = closest;
+        }
+      }
+    } else if (nearestE && nearestD > u.range * TILE * 0.85 && nearestD <= u.range * TILE * 2.5) {
+      moveTo(u, nearestE.x, nearestE.y, u.moveSpeed, dt);
+    } else if (!nearestE || nearestD > u.range * TILE * 2.5) {
+      moveTo(u, (u.homeCol + 0.5) * TILE, (u.homeRow + 0.5) * TILE, u.moveSpeed * 0.5, dt);
+    }
+
+    // Hard clamp to play area rows 0-19
+    u.x = clamp(u.x, TILE * 0.35, canvas.width - TILE * 0.35);
+    u.y = clamp(u.y, TILE * 0.35, canvas.height - TILE * 0.35);
+  }
+
+  // Unit separation
+  for (let i = 0; i < units.length; i++) {
+    if (!units[i].alive) continue;
+    for (let j = i + 1; j < units.length; j++) {
+      if (!units[j].alive) continue;
+      const dx = units[j].x - units[i].x, dy = units[j].y - units[i].y;
+      const d = Math.hypot(dx, dy), md = TILE * 0.7;
+      if (d < md && d > 0.1) {
+        const push = (md - d) / 2;
+        units[i].x -= (dx/d)*push; units[i].y -= (dy/d)*push;
+        units[j].x += (dx/d)*push; units[j].y += (dy/d)*push;
+        clampToField(units[i]); clampToField(units[j]);
+      }
+    }
+  }
+
+  // --- ENEMIES: fight defenders, march to exit portal (row 19), stay in grid ---
+  const exitY = (EXIT_ROW + 0.5) * TILE;
+  const lx = (LANE_X_TILE + 0.5) * TILE;
+
+  for (const e of enemies) {
+    if (e.dead || e.leaked) continue;
+    if (e.flashT > 0) e.flashT -= dt;
+    if (e.atkCooldown > 0) e.atkCooldown -= dt;
+
+    // Use alerted target if set
+    let nearestU = e.alert && e.alert.alive && e.alert.hp > 0 ? e.alert : null;
+    let nearestUD = nearestU ? dist(e.x, e.y, nearestU.x, nearestU.y) : Infinity;
+    e.alert = null;
+
+    for (const u of units) {
+      if (!u.alive) continue;
+      const d = dist(e.x, e.y, u.x, u.y);
+      if (d < nearestUD) { nearestU = u; nearestUD = d; }
+    }
+
+    if (nearestU && nearestUD <= TILE * 1.1) {
+      // Fight
+      if (e.atkCooldown <= 0) {
+        e.atkCooldown = 1.0; nearestU.hp -= 15; nearestU.flashT = 0.15;
+        particles.push({ x: nearestU.x, y: nearestU.y - 14, text: '-15', t:0.8, color:'#e74c3c' });
+        if (nearestU.hp <= 0) { nearestU.alive = false; nearestU.hp = 0; }
+        // Squad alert: tell nearby enemies about this defender
+        for (const ally of enemies) {
+          if (ally.dead || ally.leaked || ally === e) continue;
+          if (!ally.alert && dist(e.x, e.y, ally.x, ally.y) <= TILE * 3) {
+            ally.alert = nearestU;
+          }
+        }
+      }
+    } else if (nearestU && nearestUD < TILE * 5) {
+      moveTo(e, nearestU.x, nearestU.y, e.speed, dt);
+    } else {
+      // March down lane to exit
+      moveTo(e, lx, exitY, e.speed, dt);
+    }
+
+    // Check exit portal BEFORE clamping
+    if (e.y >= EXIT_ROW * TILE + TILE * 0.3) {
+      e.leaked = true;
+      leakedEnemies.push({
+        x: (KC / 2 + (Math.random() - 0.5) * 1.5) * KT,
+        y: KT * 1.2,
+        hp: Math.ceil(e.hp), maxHp: e.maxHp,
+        speed: e.speed * 1.3,
+        dead: false, flashT: 0.6, atkCooldown: 0, // flashT: teleport arrival flash
+      });
+      kParticles.push({ x: KC/2*KT, y: KT*1.5, text: '⚡ LEAKED!', t:1.8, color:'#e74c3c', big:true });
+    } else {
+      // Only clamp non-leaked enemies
+      e.x = clamp(e.x, TILE * 0.3, canvas.width - TILE * 0.3);
+      e.y = clamp(e.y, TILE * 0.3, canvas.height - TILE * 0.3);
+    }
+  }
+
+  // --- KING'S ROOM: leaked enemies attack king, king fights back ---
+  const kw = kCanvas.width, kh = kCanvas.height;
+  const kingX = kw / 2, kingY = kh * 0.7;
+  if (kingAtkCooldown > 0) kingAtkCooldown -= dt;
+
+  for (const e of leakedEnemies) {
+    if (e.dead) continue;
+    if (e.flashT > 0) e.flashT -= dt;
+    if (e.atkCooldown > 0) e.atkCooldown -= dt;
+    const d = dist(e.x, e.y, kingX, kingY);
+    if (d <= KT * 1.1) {
+      // Attack king
+      if (e.atkCooldown <= 0) {
+        e.atkCooldown = 0.8;
+        kingHp = Math.max(0, kingHp - 10);
+        kParticles.push({ x: kingX + (Math.random()-0.5)*KT, y: kingY - KT*0.4, text: '-10', t:1.0, color:'#e74c3c' });
+        updateUI();
+        if (kingHp <= 0) { phase = 'gameover'; return; }
+      }
+    } else {
+      // Move toward king, clamp to king canvas
+      const dx = kingX - e.x, dy = kingY - e.y, d2 = Math.hypot(dx, dy);
+      const s = Math.min(e.speed * 1.5 * dt, d2);
+      e.x += (dx/d2)*s; e.y += (dy/d2)*s;
+      e.x = clamp(e.x, KT*0.3, kw - KT*0.3);
+      e.y = clamp(e.y, KT*0.3, kh - KT*0.3);
+    }
+  }
+
+  // King auto-attacks nearest leaked enemy
+  if (kingAtkCooldown <= 0 && leakedEnemies.filter(e => !e.dead).length > 0) {
+    let target = null, tDist = Infinity;
+    for (const e of leakedEnemies) {
+      if (e.dead) continue;
+      const d = dist(e.x, e.y, kingX, kingY);
+      if (d < tDist) { target = e; tDist = d; }
+    }
+    if (target) {
+      kingAtkCooldown = 2.0; // slower — gives leaked enemies a chance to reach and hit king
+      target.hp -= 12; target.flashT = 0.15;
+      kParticles.push({ x: target.x, y: target.y - 12, text: '-18', t:0.8, color:'#FFD700' });
+      if (target.hp <= 0) { target.dead = true; }
+    }
+  }
+
+  // Enemy separation (same as unit separation)
+  for (let i = 0; i < enemies.length; i++) {
+    if (enemies[i].dead || enemies[i].leaked) continue;
+    for (let j = i + 1; j < enemies.length; j++) {
+      if (enemies[j].dead || enemies[j].leaked) continue;
+      const dx = enemies[j].x - enemies[i].x, dy = enemies[j].y - enemies[i].y;
+      const d = Math.hypot(dx, dy), md = TILE * 0.65;
+      if (d < md && d > 0.1) {
+        const push = (md - d) / 2;
+        enemies[i].x -= (dx/d)*push; enemies[i].y -= (dy/d)*push;
+        enemies[j].x += (dx/d)*push; enemies[j].y += (dy/d)*push;
+        clampToField(enemies[i]); clampToField(enemies[j]);
+      }
+    }
+  }
+
+  // Leaked enemy separation in king room
+  for (let i = 0; i < leakedEnemies.length; i++) {
+    if (leakedEnemies[i].dead) continue;
+    for (let j = i + 1; j < leakedEnemies.length; j++) {
+      if (leakedEnemies[j].dead) continue;
+      const dx = leakedEnemies[j].x - leakedEnemies[i].x, dy = leakedEnemies[j].y - leakedEnemies[i].y;
+      const d = Math.hypot(dx, dy), md = KT * 0.65;
+      if (d < md && d > 0.1) {
+        const push = (md - d) / 2;
+        leakedEnemies[i].x -= (dx/d)*push; leakedEnemies[i].y -= (dy/d)*push;
+        leakedEnemies[j].x += (dx/d)*push; leakedEnemies[j].y += (dy/d)*push;
+        leakedEnemies[i].x = clamp(leakedEnemies[i].x, KT*0.3, kCanvas.width-KT*0.3);
+        leakedEnemies[i].y = clamp(leakedEnemies[i].y, KT*0.3, kCanvas.height-KT*0.3);
+        leakedEnemies[j].x = clamp(leakedEnemies[j].x, KT*0.3, kCanvas.width-KT*0.3);
+        leakedEnemies[j].y = clamp(leakedEnemies[j].y, KT*0.3, kCanvas.height-KT*0.3);
+      }
+    }
+  }
+
+  // Particles
+  particles = particles.filter(p => p.t > 0);
+  for (const p of particles) { p.t -= dt; p.y -= 20 * dt; }
+  kParticles = kParticles.filter(p => p.t > 0);
+  for (const p of kParticles) { p.t -= dt; p.y -= 20 * dt; }
+
+  // Wave complete?
+  const mainAlive = enemies.filter(e => !e.dead && !e.leaked);
+  const kAlive = leakedEnemies.filter(e => !e.dead);
+  if (mainAlive.length === 0 && kAlive.length === 0 && enemies.length > 0) {
+    const leaks = enemies.filter(e => e.leaked).length;
+    const income = 10 + wave + (leaks === 0 ? 5 : 0);
+    gold += income; wave++; enemies = []; leakedEnemies = [];
+    particles.push({ x: canvas.width/2, y: canvas.height/2, text: leaks===0?`✓ CLEAN! +${income}g`:`WAVE DONE +${10+wave-1}g`, t:2.0, color:leaks===0?'#2ecc71':'#f1c40f', big:true });
+    updateUI();
+    setTimeout(startBuildPhase, 1800);
+    phase = 'income';
+  }
+}
+
+// ---- DRAW MAIN CANVAS ----
+function draw() {
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Spawn zone highlight (row 0)
+  ctx.fillStyle = 'rgba(231,76,60,0.12)';
+  ctx.fillRect(0, 0, canvas.width, TILE);
+  ctx.fillStyle = 'rgba(231,76,60,0.5)';
+  ctx.font = `bold ${Math.floor(TILE*0.38)}px Segoe UI`; ctx.textAlign = 'center';
+  ctx.fillText('⚡ SPAWN', canvas.width/2, TILE*0.65);
+
+  // Exit portal zone (row 19)
+  ctx.fillStyle = 'rgba(155,89,182,0.12)';
+  ctx.fillRect(0, EXIT_ROW * TILE, canvas.width, TILE);
+  // Portal glow
+  const px = (LANE_X_TILE + 0.5) * TILE, py = (EXIT_ROW + 0.5) * TILE;
+  const g = ctx.createRadialGradient(px, py, 2, px, py, TILE * 0.85);
+  g.addColorStop(0, 'rgba(155,89,182,0.85)'); g.addColorStop(1, 'rgba(155,89,182,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(px, py, TILE*0.85, TILE*0.6, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'rgba(200,150,255,0.85)';
+  ctx.font = `bold ${Math.floor(TILE*0.38)}px Segoe UI`; ctx.textAlign='center';
+  ctx.fillText('🌀 EXIT PORTAL', canvas.width/2, py + TILE*0.2);
+
+  // Combat zone background (rows 1-18)
+  ctx.fillStyle = 'rgba(255,255,255,0.015)';
+  ctx.fillRect(0, TILE, canvas.width, 18*TILE);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.055)'; ctx.lineWidth = 0.5;
+  for (let c=0;c<=COLS;c++){ctx.beginPath();ctx.moveTo(c*TILE,0);ctx.lineTo(c*TILE,canvas.height);ctx.stroke();}
+  for (let r=0;r<=ROWS;r++){ctx.beginPath();ctx.moveTo(0,r*TILE);ctx.lineTo(canvas.width,r*TILE);ctx.stroke();}
+
+  // Lane hint
+  ctx.fillStyle = 'rgba(255,255,255,0.02)';
+  ctx.fillRect(5*TILE, 0, 2*TILE, canvas.height);
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.font = `${Math.floor(TILE*0.42)}px sans-serif`; ctx.textAlign = 'center';
+  for (let r=2;r<EXIT_ROW;r+=3) ctx.fillText('▼', px, (r+0.65)*TILE);
+
+  // Hover
+  if (hoverCell && phase === 'build' && selectedType) {
+    const {col, row} = hoverCell;
+    ctx.fillStyle = isPlaceable(col, row) ? 'rgba(255,255,255,0.09)' : 'rgba(255,0,0,0.14)';
+    ctx.fillRect(col*TILE, row*TILE, TILE, TILE);
+    if (isPlaceable(col, row)) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.17)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc((col+0.5)*TILE,(row+0.5)*TILE,UNIT_DEFS[selectedType].range*TILE,0,Math.PI*2); ctx.stroke();
+    }
+  }
+
+  // Home markers during combat
+  if (phase === 'combat') {
+    ctx.setLineDash([3,3]);
+    for (const u of units) {
+      ctx.strokeStyle = u.color + '55'; ctx.lineWidth = 1;
+      ctx.strokeRect(u.homeCol*TILE+3, u.homeRow*TILE+3, TILE-6, TILE-6);
+    }
+    ctx.setLineDash([]);
+  }
+
+  // Units
+  for (const u of units) {
+    if (!u.alive && phase === 'combat') continue;
+    if (hoverCell && hoverCell.col===u.homeCol && hoverCell.row===u.homeRow) {
+      ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc(u.x,u.y,u.range*TILE,0,Math.PI*2); ctx.stroke();
+    }
+    const r = TILE * 0.36;
+    ctx.fillStyle = u.flashT > 0 ? '#fff' : u.color;
+    ctx.beginPath(); ctx.arc(u.x, u.y, r, 0, Math.PI*2); ctx.fill();
+    const hpR = u.hp/u.maxHp;
+    ctx.fillStyle='#111'; ctx.fillRect(u.x-r, u.y-r-5, r*2, 3);
+    ctx.fillStyle = hpR>0.5?'#2ecc71':hpR>0.25?'#f39c12':'#e74c3c';
+    ctx.fillRect(u.x-r, u.y-r-5, r*2*hpR, 3);
+  }
+
+  // Enemies
+  for (const e of enemies) {
+    if (e.dead || e.leaked) continue;
+    const w=TILE*0.68, h=TILE*0.48;
+    ctx.fillStyle = e.flashT>0 ? '#fff' : '#e74c3c';
+    ctx.beginPath(); ctx.roundRect(e.x-w/2, e.y-h/2, w, h, 3); ctx.fill();
+    const hpR = e.hp/e.maxHp;
+    ctx.fillStyle='#333'; ctx.fillRect(e.x-w/2, e.y-h/2-6, w, 4);
+    ctx.fillStyle=hpR>0.5?'#2ecc71':hpR>0.25?'#f39c12':'#e74c3c';
+    ctx.fillRect(e.x-w/2, e.y-h/2-6, w*hpR, 4);
+  }
+
+  // Particles
+  for (const p of particles) {
+    ctx.globalAlpha = Math.min(1, p.t);
+    ctx.font = p.big ? 'bold 19px Segoe UI' : 'bold 12px Segoe UI';
+    ctx.fillStyle = p.color; ctx.textAlign='center';
+    ctx.shadowColor='#000'; ctx.shadowBlur = p.big?8:3;
+    ctx.fillText(p.text, p.x, p.y);
+    ctx.shadowBlur=0; ctx.globalAlpha=1;
+  }
+  ctx.textAlign='left';
+
+  if (phase==='gameover') {
+    ctx.fillStyle='rgba(0,0,0,0.75)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.textAlign='center';
+    ctx.font='bold 32px Segoe UI'; ctx.fillStyle='#e74c3c';
+    ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2-16);
+    ctx.font='16px Segoe UI'; ctx.fillStyle='#aaa';
+    ctx.fillText(`Survived ${wave-1} waves`, canvas.width/2, canvas.height/2+18);
+    ctx.fillText('Refresh to restart', canvas.width/2, canvas.height/2+44);
+    ctx.textAlign='left';
+  }
+}
+
+// ---- DRAW KING'S ROOM ----
+function drawKingRoom() {
+  const kw = kCanvas.width, kh = kCanvas.height;
+  kCtx.fillStyle = '#0d1b2a'; kCtx.fillRect(0, 0, kw, kh);
+
+  // Border
+  kCtx.strokeStyle = '#8e44ad'; kCtx.lineWidth = 3;
+  kCtx.strokeRect(2, 2, kw-4, kh-4);
+
+  // Title bar
+  kCtx.fillStyle = 'rgba(142,68,173,0.18)'; kCtx.fillRect(2, 2, kw-4, KT*1.1);
+  kCtx.fillStyle = '#c39bd3'; kCtx.font = `bold ${Math.floor(KT*0.4)}px Segoe UI`; kCtx.textAlign='center';
+  kCtx.fillText("KING'S CHAMBER", kw/2, KT*0.72);
+
+  // Grid
+  kCtx.strokeStyle='rgba(255,255,255,0.04)'; kCtx.lineWidth=0.5;
+  for(let c=0;c<=KC;c++){kCtx.beginPath();kCtx.moveTo(c*KT,0);kCtx.lineTo(c*KT,kh);kCtx.stroke();}
+  for(let r=0;r<=KR;r++){kCtx.beginPath();kCtx.moveTo(0,r*KT);kCtx.lineTo(kw,r*KT);kCtx.stroke();}
+
+  const kingX = kw/2, kingY = kh*0.65, kingR = KT*0.52;
+
+  // King glow
+  const glow = kCtx.createRadialGradient(kingX,kingY,0,kingX,kingY,kingR*2.2);
+  glow.addColorStop(0,'rgba(255,215,0,0.25)'); glow.addColorStop(1,'rgba(255,215,0,0)');
+  kCtx.fillStyle=glow; kCtx.beginPath(); kCtx.arc(kingX,kingY,kingR*2.2,0,Math.PI*2); kCtx.fill();
+
+  // King body
+  const hpR = kingHp/maxKingHp;
+  kCtx.fillStyle = hpR>0.5?'#f39c12':hpR>0.25?'#e67e22':'#c0392b';
+  kCtx.beginPath(); kCtx.arc(kingX,kingY,kingR,0,Math.PI*2); kCtx.fill();
+  kCtx.strokeStyle='#FFD700'; kCtx.lineWidth=2.5;
+  kCtx.beginPath(); kCtx.arc(kingX,kingY,kingR,0,Math.PI*2); kCtx.stroke();
+
+  // Crown
+  const cy = kingY - kingR;
+  kCtx.fillStyle='#FFD700';
+  kCtx.beginPath();
+  kCtx.moveTo(kingX-KT*0.33, cy);
+  kCtx.lineTo(kingX-KT*0.33, cy-KT*0.27);
+  kCtx.lineTo(kingX-KT*0.16, cy-KT*0.13);
+  kCtx.lineTo(kingX, cy-KT*0.3);
+  kCtx.lineTo(kingX+KT*0.16, cy-KT*0.13);
+  kCtx.lineTo(kingX+KT*0.33, cy-KT*0.27);
+  kCtx.lineTo(kingX+KT*0.33, cy);
+  kCtx.closePath(); kCtx.fill();
+
+  // Attack indicator (flash when king attacks)
+  if (kingAtkCooldown > 0.65) {
+    kCtx.strokeStyle='rgba(255,215,0,0.6)'; kCtx.lineWidth=2;
+    kCtx.beginPath(); kCtx.arc(kingX,kingY,kingR*1.6,0,Math.PI*2); kCtx.stroke();
+  }
+
+  // HP bar
+  const bw = kw*0.72, bh = KT*0.34;
+  const bx = (kw-bw)/2, by = kingY + kingR + KT*0.22;
+  kCtx.fillStyle='#1a1a2e'; kCtx.fillRect(bx,by,bw,bh);
+  kCtx.fillStyle = hpR>0.5?'#2ecc71':hpR>0.25?'#f39c12':'#e74c3c';
+  kCtx.fillRect(bx,by,bw*hpR,bh);
+  kCtx.strokeStyle='#555'; kCtx.lineWidth=1; kCtx.strokeRect(bx,by,bw,bh);
+  kCtx.fillStyle='#fff'; kCtx.font=`bold ${Math.floor(KT*0.28)}px Segoe UI`; kCtx.textAlign='center';
+  kCtx.fillText(`${kingHp} / ${maxKingHp}`, kw/2, by+bh*0.8);
+
+  // Leaked enemies
+  for (const e of leakedEnemies) {
+    if (e.dead) continue;
+    const ew=KT*0.58,eh=KT*0.42;
+    kCtx.fillStyle = e.flashT>0?'#fff':'#e74c3c';
+    kCtx.beginPath(); kCtx.roundRect(e.x-ew/2,e.y-eh/2,ew,eh,3); kCtx.fill();
+    const er=e.hp/e.maxHp;
+    kCtx.fillStyle='#333'; kCtx.fillRect(e.x-ew/2,e.y-eh/2-5,ew,3);
+    kCtx.fillStyle=er>0.5?'#2ecc71':er>0.25?'#f39c12':'#e74c3c';
+    kCtx.fillRect(e.x-ew/2,e.y-eh/2-5,ew*er,3);
+  }
+
+  // King room particles
+  for (const p of kParticles) {
+    kCtx.globalAlpha=Math.min(1,p.t);
+    kCtx.font=`bold ${Math.floor(KT*0.4)}px Segoe UI`; kCtx.fillStyle=p.color; kCtx.textAlign='center';
+    kCtx.shadowColor='#000'; kCtx.shadowBlur=4;
+    kCtx.fillText(p.text, p.x, p.y);
+    kCtx.shadowBlur=0; kCtx.globalAlpha=1;
+  }
+  kCtx.textAlign='left';
+
+  if (phase==='gameover') {
+    kCtx.fillStyle='rgba(0,0,0,0.82)'; kCtx.fillRect(0,0,kw,kh);
+    kCtx.textAlign='center';
+    kCtx.font=`${Math.floor(KT*0.9)}px Segoe UI`; kCtx.fillStyle='#c0392b';
+    kCtx.fillText('☠', kw/2, kh/2+KT*0.3);
+    kCtx.textAlign='left';
+  }
+}
+
+function loop(ts) {
+  const dt = Math.min((ts - lastTime)/1000, 0.05); lastTime = ts;
+  update(dt); draw(); drawKingRoom();
+  requestAnimationFrame(loop);
+}
+
+startBuildPhase(); updateUI();
+requestAnimationFrame(ts => { lastTime = ts; loop(ts); });
+</script>
+</body>
+</html>
