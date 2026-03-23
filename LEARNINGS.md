@@ -202,6 +202,31 @@ as an alternative.
 
 ---
 
+## Issue 9: Force pushing to main wiped the prototype
+
+**Date:** 2026-03-22 / discovered 2026-03-23  
+**Caused by:** Agent
+
+**What happened:**  
+The workspace git repo was committing to `master` while GitHub's default branch was `main` (with
+different history). To align them, force pushed `master` to `main`. The old `main` contained
+`index.html` (the Legion TD prototype served via GitHub Pages). Force push overwrote it.
+Prototype returned 404 the next morning.
+
+**Root cause:**  
+Did not inspect the contents of the remote branch before force pushing. Assumed `main` was empty
+or equivalent. It wasn't — it had real content being actively served.
+
+**Solution:**  
+Recovered `index.html` from git history (`git show <sha>:index.html`) and committed it back.
+
+**Rule:**  
+Before `git push --force`, always inspect what's on the remote branch:
+`git fetch && git log origin/<branch> --oneline -10`
+Never assume a remote branch is empty or irrelevant.
+
+---
+
 ## General Principles Extracted
 
 **On infrastructure changes:**
