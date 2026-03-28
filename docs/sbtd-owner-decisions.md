@@ -25,19 +25,38 @@
 
 ## Races
 
-**Human Alliance is dropped. Three races for alpha:**
+**2 races for initial build. CRISPR Corps deferred.**
 
 ### Race 1 — Human Survivors
-*Survived the apocalypse. Ragtag team.*
-Balanced generalists. 8 units.
+*Survived the apocalypse. Ragtag team. Balanced generalists.*
+
+| Unit | Role | Mechanic |
+|---|---|---|
+| Scavenger | Fast melee | Low HP, low cost |
+| Scout | Ranged | Medium HP, medium cost |
+| Field Medic | Support | Heals single nearby ally; slow melee when no heal target |
+| Camp Raider | Melee | Short-range flamethrower, high damage |
+| Berserker | Tank | High HP, melee |
+| Camp Elder | Aura support | Chanting aura — +damage and +HP to nearby allies |
+| Killdozer | Specialist | Slow bulldozer; pushes enemies into walls; heavy damage on wall crush |
+| IED Mortar Team | Siege | Long range, slow, high splash damage |
 
 ### Race 2 — Clockwork Mechanicum
-*Mechanical robots controlled by a master.*
-High damage, high speed, fragile. 8 units.
+*Mechanical robots. High damage, high speed, fragile.*
+
+| Unit | Role | Mechanic |
+|---|---|---|
+| Sawboy | Melee | Chainsaw legs, normal HP |
+| Clapper | Long-range melee | High damage, normal HP |
+| ScrewDriver | Fast ranged | Shoots screws, low damage, slow movement |
+| Boomba | Suicide bomber | Roomba that patrols; explodes on enemy contact — huge splash |
+| Nano Repair Bot Cloud | Support | Cloud that drifts over allies, slowly healing them |
+| Metal Onion | Tank | Melee, low damage, high HP |
+| Acid Spraycan Spider | Melee | Short-range acid spray (like flamethrower) |
+| Tesla Coil Tower | Siege | Lightning chains between up to 3 nearby enemies; slow, fragile, immobile |
 
 ### Race 3 — CRISPR Corps
-*USMC soldiers from a failed genetic experiment.*
-Slow, tanky. 8 units.
+*Deferred — not in initial build.*
 
 | Decision | Answer | Status |
 |---|---|---|
@@ -94,9 +113,7 @@ Slow, tanky. 8 units.
 
 ## Still Pending
 
-1. **Map sketches** — Morbror to draw both map layouts and post in Discord
-2. **Human Survivors unit designs** — 8 units, balanced generalist theme
-3. **Clockwork Mechanicum unit designs** — 8 units, high damage/speed/fragile
-4. **CRISPR Corps unit designs** — 8 units, slow/tanky
+1. **Map sketch for Map 2** — only Map 1 sketched so far
+2. **CRISPR Corps** — deferred, design when ready
 
 *Last updated: 2026-03-28*
