@@ -25,20 +25,19 @@
 
 ## Races
 
-### Race 1 — Human Alliance
-Balanced generalists. 8 units. (Validated in prototype)
+**Human Alliance is dropped. Three races for alpha:**
 
-### Race 2 — Human Survivors
+### Race 1 — Human Survivors
 *Survived the apocalypse. Ragtag team.*
-Balanced generalists.
+Balanced generalists. 8 units.
 
-### Race 3 — Clockwork Mechanicum
+### Race 2 — Clockwork Mechanicum
 *Mechanical robots controlled by a master.*
-High damage, high speed, fragile.
+High damage, high speed, fragile. 8 units.
 
-### Race 4 — CRISPR Corps
+### Race 3 — CRISPR Corps
 *USMC soldiers from a failed genetic experiment.*
-Slow, tanky.
+Slow, tanky. 8 units.
 
 | Decision | Answer | Status |
 |---|---|---|
@@ -96,8 +95,8 @@ Slow, tanky.
 ## Still Pending
 
 1. **Map sketches** — Morbror to draw both map layouts and post in Discord
-2. **Race 2 (Human Survivors) unit designs** — 8 units, balanced generalist theme
-3. **Race 3 (Clockwork Mechanicum) unit designs** — 8 units, high damage/speed/fragile
-4. **Race 4 (CRISPR Corps) unit designs** — 8 units, slow/tanky
+2. **Human Survivors unit designs** — 8 units, balanced generalist theme
+3. **Clockwork Mechanicum unit designs** — 8 units, high damage/speed/fragile
+4. **CRISPR Corps unit designs** — 8 units, slow/tanky
 
 *Last updated: 2026-03-28*
